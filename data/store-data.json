@@ -1,0 +1,10 @@
+{
+  "settings": {
+    "telegramChannel": "https://t.me/veligodsky_ls",
+    "telegramDM": "https://t.me/veligodsky_ls",
+    "freeShippingThreshold": 8000,
+    "adminPassword": "admin123",
+    "storeName": "VELIGODSKY.PARFUMS"
+  },
+  "products": []
+}

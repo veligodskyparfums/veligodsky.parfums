@@ -1,0 +1,219 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VELIGODSKY.PARFUMS</title>
+  <meta name="description" content="Оригинальная парфюмерия с доставкой по России, Европе и США.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Cormorant+Garamond:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-glow page-glow--one" aria-hidden="true"></div>
+  <div class="page-glow page-glow--two" aria-hidden="true"></div>
+
+  <header class="site-header" id="top">
+    <div class="container header-inner">
+      <a href="#top" class="logo">VELIGODSKY.PARFUMS</a>
+
+      <button class="menu-toggle" id="menuToggle" type="button" aria-expanded="false" aria-controls="siteNav">
+        Меню
+      </button>
+
+      <nav class="nav" id="siteNav" aria-label="Основная навигация">
+        <a href="#catalog">Каталог</a>
+        <a href="#top-aromas">Топ ароматов</a>
+        <a href="#about">О нас</a>
+        <button class="cart-link" id="cartTrigger" type="button" aria-label="Открыть корзину">
+          <span aria-hidden="true">🛒</span>
+          <span>Корзина</span>
+          <span class="cart-count" id="cartCount">0</span>
+        </button>
+      </nav>
+
+      <a class="btn btn-outline header-telegram" id="headerTelegramBtn" href="https://t.me/veligodsky_ls" target="_blank" rel="noopener noreferrer">
+        Связаться в Telegram
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero reveal" id="hero">
+      <div class="hero-bg" role="img" aria-label="Премиальная парфюмерия"></div>
+      <div class="container hero-content">
+        <p class="eyebrow">Премиальная коллекция</p>
+        <h1>Оригинальная парфюмерия с доставкой по всему миру</h1>
+        <p class="hero-subtitle">Россия • Европа • США</p>
+        <a href="#catalog" class="btn btn-primary">Перейти в каталог</a>
+      </div>
+    </section>
+
+    <section class="advantages section" id="advantages">
+      <div class="container">
+        <div class="section-heading reveal">
+          <h2>Почему выбирают нас</h2>
+        </div>
+
+        <div class="advantage-grid">
+          <article class="adv-card reveal">
+            <div class="adv-icon" aria-hidden="true">🌍</div>
+            <p>Доставка по всей России, Европе и США</p>
+          </article>
+          <article class="adv-card reveal">
+            <div class="adv-icon" aria-hidden="true">🎁</div>
+            <p>К каждому заказу — пробник 2 мл любого аромата на ваш выбор</p>
+          </article>
+          <article class="adv-card reveal">
+            <div class="adv-icon" aria-hidden="true">🚚</div>
+            <p>Бесплатная доставка при заказе от <span id="freeShippingInline">8 000 ₽</span></p>
+          </article>
+          <article class="adv-card reveal">
+            <div class="adv-icon" aria-hidden="true">💬</div>
+            <p>Бесплатная консультация и персональный подбор аромата</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="top-aromas section" id="top-aromas">
+      <div class="container">
+        <div class="section-heading reveal">
+          <h2>Топ ароматы</h2>
+        </div>
+
+        <div class="tabs reveal" role="tablist" aria-label="Топ подборки">
+          <button class="tab-btn is-active" data-tab="week" type="button" role="tab" aria-selected="true">Топ недели</button>
+          <button class="tab-btn" data-tab="month" type="button" role="tab" aria-selected="false">Топ месяца</button>
+        </div>
+
+        <div class="tab-panels">
+          <div class="tab-panel is-active" id="topWeekPanel" role="tabpanel">
+            <div class="top-slider" id="topWeekSlider"></div>
+          </div>
+          <div class="tab-panel" id="topMonthPanel" role="tabpanel">
+            <div class="top-slider" id="topMonthSlider"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="catalog section" id="catalog">
+      <div class="container">
+        <div class="section-heading reveal">
+          <h2>Каталог ароматов</h2>
+        </div>
+
+        <div class="filters reveal">
+          <label class="field">
+            <span>Поиск</span>
+            <input type="text" id="searchInput" placeholder="Введите название аромата">
+          </label>
+
+          <label class="field">
+            <span>Пол</span>
+            <select id="genderFilter">
+              <option value="all">Все</option>
+              <option value="male">Мужские</option>
+              <option value="female">Женские</option>
+              <option value="unisex">Унисекс</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Бренд</span>
+            <select id="brandFilter">
+              <option value="all">Все бренды</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Цена от, ₽</span>
+            <input type="number" id="priceMin" min="0" placeholder="0">
+          </label>
+
+          <label class="field">
+            <span>Цена до, ₽</span>
+            <input type="number" id="priceMax" min="0" placeholder="50000">
+          </label>
+
+          <button class="btn btn-ghost filter-reset" id="resetFiltersBtn" type="button">Сбросить фильтры</button>
+        </div>
+
+        <div class="catalog-grid" id="catalogGrid"></div>
+
+        <div class="catalog-footer reveal">
+          <button class="btn btn-outline" id="showMoreBtn" type="button">Показать ещё</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="about section" id="about">
+      <div class="container">
+        <article class="about-card reveal">
+          <h2>О нас</h2>
+          <p>
+            VELIGODSKY.PARFUMS — это подборка оригинальной нишевой и люксовой парфюмерии с акцентом на качество, сервис и индивидуальный подход.
+            Мы помогаем выбрать аромат под стиль, образ жизни и настроение.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="consultation section">
+      <div class="container">
+        <article class="consult-banner reveal">
+          <h2>Не знаете, какой аромат выбрать?</h2>
+          <p>Мы проведем бесплатную консультацию и подберем идеальный парфюм именно для вас</p>
+          <a class="btn btn-primary" id="consultTelegramBtn" href="https://t.me/veligodsky_ls" target="_blank" rel="noopener noreferrer">
+            Получить консультацию в Telegram
+          </a>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div class="footer-links">
+        <a id="footerChannelLink" href="#" target="_blank" rel="noopener noreferrer">Telegram-канал</a>
+        <a id="footerDmLink" href="#" target="_blank" rel="noopener noreferrer">Личные сообщения в Telegram</a>
+      </div>
+      <p>Доставка по России, Европе и США</p>
+      <p>© <span id="yearNow"></span> VELIGODSKY.PARFUMS</p>
+      <a class="admin-link" href="admin/" title="Админ-панель">admin</a>
+    </div>
+  </footer>
+
+  <aside class="cart-sidebar" id="cartSidebar" aria-label="Корзина">
+    <div class="cart-header">
+      <h3>Корзина</h3>
+      <button type="button" class="icon-btn" id="cartCloseBtn" aria-label="Закрыть корзину">✕</button>
+    </div>
+
+    <div class="cart-items" id="cartItems"></div>
+
+    <div class="cart-footer">
+      <div class="cart-total-row">
+        <span>Итого:</span>
+        <strong id="cartTotal">0 ₽</strong>
+      </div>
+      <p class="shipping-status" id="shippingStatus">До бесплатной доставки осталось 8 000 ₽</p>
+
+      <label class="field">
+        <span>Выберите пробник 2ml в подарок</span>
+        <input type="text" id="sampleInput" placeholder="Например: Baccarat Rouge 540">
+      </label>
+
+      <button type="button" class="btn btn-primary full-width" id="checkoutBtn">Оформить заказ</button>
+    </div>
+  </aside>
+
+  <div class="overlay" id="cartOverlay" aria-hidden="true"></div>
+  <div class="toast" id="toast"></div>
+
+  <script src="scripts/common.js"></script>
+  <script src="scripts/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Админ-панель | VELIGODSKY.PARFUMS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Cormorant+Garamond:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body class="admin-page">
+  <main class="admin-shell">
+    <section class="admin-login" id="adminLoginView">
+      <h1>Админ-панель</h1>
+      <p>Введите пароль для доступа</p>
+      <form id="adminLoginForm" class="admin-form">
+        <label class="field">
+          <span>Пароль</span>
+          <input id="adminPasswordInput" type="password" placeholder="admin123" required>
+        </label>
+        <button class="btn btn-primary full-width" type="submit">Войти</button>
+      </form>
+      <a class="btn btn-ghost full-width" href="../index.html">Вернуться на сайт</a>
+    </section>
+
+    <section class="admin-panel hidden" id="adminPanelView">
+      <header class="admin-topbar">
+        <div>
+          <h1>VELIGODSKY.PARFUMS</h1>
+          <p>Управление каталогом и настройками</p>
+        </div>
+        <div class="admin-top-actions">
+          <a class="btn btn-ghost" href="../index.html" target="_blank" rel="noopener noreferrer">Открыть сайт</a>
+          <button class="btn btn-outline" type="button" id="adminLogoutBtn">Выйти</button>
+        </div>
+      </header>
+
+      <section class="admin-section">
+        <h2>Настройки магазина</h2>
+        <form id="settingsForm" class="admin-form admin-grid">
+          <label class="field">
+            <span>Ссылка на Telegram-канал</span>
+            <input type="url" id="telegramChannelInput" required>
+          </label>
+
+          <label class="field">
+            <span>Ссылка на личные сообщения Telegram</span>
+            <input type="url" id="telegramDmInput" required>
+          </label>
+
+          <label class="field">
+            <span>Порог бесплатной доставки, ₽</span>
+            <input type="number" id="freeShippingInput" min="0" required>
+          </label>
+
+          <label class="field">
+            <span>Новый пароль админки</span>
+            <input type="text" id="adminPasswordNewInput" placeholder="Оставьте пустым, чтобы не менять">
+          </label>
+
+          <button class="btn btn-primary" type="submit">Сохранить настройки</button>
+        </form>
+      </section>
+
+      <section class="admin-section">
+        <h2 id="editorTitle">Добавить парфюм</h2>
+        <form id="perfumeForm" class="admin-form">
+          <input type="hidden" id="perfumeIdInput">
+
+          <div class="admin-grid">
+            <label class="field">
+              <span>Название аромата</span>
+              <input type="text" id="perfumeNameInput" required>
+            </label>
+
+            <label class="field">
+              <span>Бренд</span>
+              <input type="text" id="perfumeBrandInput" required>
+            </label>
+
+            <label class="field">
+              <span>Пол</span>
+              <select id="perfumeGenderInput" required>
+                <option value="male">Мужские</option>
+                <option value="female">Женские</option>
+                <option value="unisex">Унисекс</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Описание</span>
+            <textarea id="perfumeDescriptionInput" rows="3" placeholder="Краткое описание аромата"></textarea>
+          </label>
+
+          <label class="field">
+            <span>Фото парфюма</span>
+            <input type="file" id="perfumeImageInput" accept="image/*">
+          </label>
+
+          <div class="image-preview-wrap">
+            <img id="perfumeImagePreview" class="image-preview" alt="Предпросмотр фото" src="">
+          </div>
+
+          <div class="top-checkboxes">
+            <label><input type="checkbox" id="topWeekInput"> Топ недели</label>
+            <label><input type="checkbox" id="topMonthInput"> Топ месяца</label>
+          </div>
+
+          <div class="volume-block">
+            <div class="volume-header">
+              <h3>Объёмы и цены</h3>
+              <button type="button" class="btn btn-ghost" id="addVolumeBtn">Добавить объём</button>
+            </div>
+            <div id="volumesContainer" class="volumes-container"></div>
+          </div>
+
+          <div class="editor-actions">
+            <button class="btn btn-primary" type="submit">Сохранить парфюм</button>
+            <button class="btn btn-ghost" type="button" id="cancelEditBtn">Очистить форму</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="admin-section">
+        <h2>Каталог</h2>
+        <div id="adminProductsList" class="admin-products"></div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" id="adminToast"></div>
+
+  <script src="../scripts/common.js"></script>
+  <script src="../scripts/admin.js"></script>
+</body>
+</html>
