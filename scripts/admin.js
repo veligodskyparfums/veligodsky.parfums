@@ -7,6 +7,12 @@
   }
 
   var AUTH_KEY = "veligodsky_admin_auth";
+  var MAX_UPLOAD_FILE_SIZE = 12 * 1024 * 1024;
+  var MAX_IMAGE_DATA_LENGTH = 900 * 1024;
+  var MAX_IMAGE_DIMENSION = 1200;
+  var MIN_IMAGE_DIMENSION = 500;
+  var IMAGE_QUALITY_START = 0.82;
+  var IMAGE_QUALITY_MIN = 0.5;
 
   var state = {
     editingId: null,
@@ -261,7 +267,86 @@
     return Array.from(uniqueMap.values());
   }
 
-  function handleImageUpload() {
+  function readFileAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        resolve(String(reader.result || ""));
+      };
+      reader.onerror = function () {
+        reject(new Error("FILE_READ_ERROR"));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImageElement(src) {
+    return new Promise(function (resolve, reject) {
+      var image = new Image();
+      image.onload = function () {
+        resolve(image);
+      };
+      image.onerror = function () {
+        reject(new Error("IMAGE_DECODE_ERROR"));
+      };
+      image.src = src;
+    });
+  }
+
+  function renderToJpegDataUrl(image, maxDimension, quality) {
+    var width = Number(image.naturalWidth || image.width || 0);
+    var height = Number(image.naturalHeight || image.height || 0);
+    if (!width || !height) {
+      throw new Error("IMAGE_SIZE_ERROR");
+    }
+
+    var scale = Math.min(1, maxDimension / Math.max(width, height));
+    var targetWidth = Math.max(1, Math.round(width * scale));
+    var targetHeight = Math.max(1, Math.round(height * scale));
+
+    var canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    var context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("CANVAS_NOT_SUPPORTED");
+    }
+
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+
+  async function optimizeImageForStore(file) {
+    var originalDataUrl = await readFileAsDataUrl(file);
+    if (originalDataUrl.length <= MAX_IMAGE_DATA_LENGTH) {
+      return originalDataUrl;
+    }
+
+    var image = await loadImageElement(originalDataUrl);
+    var currentDimension = MAX_IMAGE_DIMENSION;
+    var currentQuality = IMAGE_QUALITY_START;
+    var best = originalDataUrl;
+
+    for (var attempt = 0; attempt < 6; attempt += 1) {
+      var candidate = renderToJpegDataUrl(image, currentDimension, currentQuality);
+      best = candidate;
+
+      if (candidate.length <= MAX_IMAGE_DATA_LENGTH) {
+        return candidate;
+      }
+
+      currentDimension = Math.max(MIN_IMAGE_DIMENSION, Math.round(currentDimension * 0.82));
+      currentQuality = Math.max(IMAGE_QUALITY_MIN, currentQuality - 0.08);
+    }
+
+    return best;
+  }
+
+  async function handleImageUpload() {
     var file = elements.perfumeImageInput.files && elements.perfumeImageInput.files[0];
     if (!file) {
       return;
@@ -269,15 +354,31 @@
 
     if (!String(file.type).startsWith("image/")) {
       showToast("Выберите файл изображения.", true);
+      elements.perfumeImageInput.value = "";
       return;
     }
 
-    var reader = new FileReader();
-    reader.onload = function () {
-      state.imageData = String(reader.result || "");
+    if (file.size > MAX_UPLOAD_FILE_SIZE) {
+      showToast("Фото больше 12 МБ. Выберите файл поменьше.", true);
+      elements.perfumeImageInput.value = "";
+      return;
+    }
+
+    try {
+      var optimized = await optimizeImageForStore(file);
+      if (!optimized || optimized.length > MAX_IMAGE_DATA_LENGTH) {
+        throw new Error("IMAGE_TOO_LARGE");
+      }
+
+      state.imageData = optimized;
       setPreviewImage(state.imageData);
-    };
-    reader.readAsDataURL(file);
+      showToast("Фото загружено");
+    } catch (error) {
+      state.imageData = "";
+      setPreviewImage("");
+      elements.perfumeImageInput.value = "";
+      showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
+    }
   }
 
   function setPreviewImage(src) {
@@ -317,6 +418,10 @@
     });
 
     var image = state.imageData || (existing && existing.image) || store.getDefaultData().products[0].image;
+    if (String(image).indexOf("data:image/") === 0 && String(image).length > MAX_IMAGE_DATA_LENGTH) {
+      showToast("Слишком тяжелое фото. Выберите другое изображение.", true);
+      return;
+    }
 
     var payload = {
       id: id || store.uid("p"),
@@ -346,6 +451,10 @@
       renderProducts();
       resetEditor();
     } catch (error) {
+      if (String(error && error.message || "").indexOf("413") >= 0) {
+        showToast("Фото слишком тяжелое для сервера. Уменьшите размер.", true);
+        return;
+      }
       showToast("Не удалось сохранить товар на сервер.", true);
     }
   }
