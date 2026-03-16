@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "node -e \"console.log('Build step: skipped (no frontend bundling required)')\"",
+    "build": "node --check server.js && node --check scripts/common.js && node --check scripts/app.js && node --check scripts/admin.js",
     "start": "node server.js"
   },
   "dependencies": {
