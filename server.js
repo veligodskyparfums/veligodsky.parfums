@@ -39,6 +39,8 @@ const FALLBACK_DATA = {
 };
 
 let storeRepository = null;
+let httpServer = null;
+let shuttingDown = false;
 
 function cloneData(data) {
   return JSON.parse(JSON.stringify(data));
@@ -59,6 +61,26 @@ function sendText(res, statusCode, text) {
     "Content-Type": "text/plain; charset=utf-8"
   });
   res.end(text);
+}
+
+function handleHealthCheck(req, res) {
+  if (req.method === "HEAD") {
+    res.writeHead(200, {
+      "Cache-Control": "no-store"
+    });
+    res.end();
+    return;
+  }
+
+  if (req.method !== "GET") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  sendJson(res, 200, {
+    ok: true,
+    timestamp: new Date().toISOString()
+  });
 }
 
 function validateStoreData(payload) {
@@ -390,6 +412,16 @@ async function requestHandler(req, res) {
     const hostHeader = req.headers.host || "localhost:" + PORT;
     const requestUrl = new URL(req.url, "http://" + hostHeader);
 
+    if (
+      requestUrl.pathname === "/health"
+      || requestUrl.pathname === "/healthz"
+      || requestUrl.pathname === "/_health"
+      || requestUrl.pathname === "/api/health"
+    ) {
+      handleHealthCheck(req, res);
+      return;
+    }
+
     if (requestUrl.pathname === "/api/store-data") {
       await handleStoreApi(req, res);
       return;
@@ -411,14 +443,52 @@ async function requestHandler(req, res) {
 async function start() {
   storeRepository = await createStoreRepository();
 
-  const server = http.createServer((req, res) => {
+  httpServer = http.createServer((req, res) => {
     requestHandler(req, res);
   });
 
-  server.listen(PORT, HOST, () => {
+  httpServer.listen(PORT, HOST, () => {
     console.log("Server running at http://localhost:" + PORT);
   });
 }
+
+async function gracefulShutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  console.log("Received " + signal + ", shutting down gracefully...");
+
+  try {
+    if (httpServer) {
+      await new Promise(function (resolve) {
+        httpServer.close(function () {
+          resolve();
+        });
+      });
+    }
+  } catch (error) {
+    console.error("Failed to stop HTTP server cleanly:", error);
+  }
+
+  try {
+    if (storeRepository && typeof storeRepository.close === "function") {
+      await storeRepository.close();
+    }
+  } catch (error) {
+    console.error("Failed to close storage cleanly:", error);
+  }
+
+  process.exit(0);
+}
+
+process.on("SIGTERM", function () {
+  gracefulShutdown("SIGTERM");
+});
+
+process.on("SIGINT", function () {
+  gracefulShutdown("SIGINT");
+});
 
 start().catch((error) => {
   console.error("Failed to start server:", error);
