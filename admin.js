@@ -17,7 +17,8 @@
 
   var state = {
     editingId: null,
-    imageData: ""
+    imageData: "",
+    draftMemory: null
   };
 
   var elements = {};
@@ -111,6 +112,10 @@
 
     window.addEventListener("focus", function () {
       if (isAuthenticated()) {
+        saveEditorDraftFromForm();
+        if (isEditorDraftMeaningful(getCurrentEditorDraft())) {
+          return;
+        }
         refreshPanelFromServer(false);
       }
     });
@@ -158,6 +163,7 @@
   }
 
   async function refreshPanelFromServer(showErrorToast) {
+    saveEditorDraftFromForm();
     if (typeof store.syncFromServer === "function") {
       try {
         await store.syncFromServer();
@@ -284,11 +290,19 @@
     return Array.from(uniqueMap.values());
   }
 
+  function cloneDraft(value) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (error) {
+      return null;
+    }
+  }
+
   function readEditorDraft() {
     try {
       var raw = localStorage.getItem(EDITOR_DRAFT_KEY);
       if (!raw) {
-        return null;
+        return state.draftMemory ? cloneDraft(state.draftMemory) : null;
       }
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") {
@@ -307,7 +321,7 @@
         }).filter(Boolean)
         : [];
 
-      return {
+      var safeDraft = {
         editingId: String(parsed.editingId || ""),
         name: String(parsed.name || ""),
         brand: String(parsed.brand || ""),
@@ -318,12 +332,15 @@
         imageData: String(parsed.imageData || ""),
         volumes: safeVolumes
       };
+      state.draftMemory = cloneDraft(safeDraft);
+      return safeDraft;
     } catch (error) {
-      return null;
+      return state.draftMemory ? cloneDraft(state.draftMemory) : null;
     }
   }
 
   function writeEditorDraft(draft) {
+    state.draftMemory = cloneDraft(draft);
     try {
       localStorage.setItem(EDITOR_DRAFT_KEY, JSON.stringify(draft));
     } catch (error) {
@@ -332,6 +349,7 @@
   }
 
   function clearEditorDraft() {
+    state.draftMemory = null;
     try {
       localStorage.removeItem(EDITOR_DRAFT_KEY);
     } catch (error) {
@@ -538,8 +556,15 @@
       return;
     }
 
-    if (!String(file.type).startsWith("image/")) {
+    var fileType = String(file.type || "").toLowerCase();
+    if (!String(fileType).startsWith("image/")) {
       showToast("Выберите файл изображения.", true);
+      elements.perfumeImageInput.value = "";
+      return;
+    }
+
+    if (fileType.indexOf("heic") >= 0 || fileType.indexOf("heif") >= 0) {
+      showToast("Формат HEIC/HEIF не поддерживается. Сохраните фото как JPG/PNG.", true);
       elements.perfumeImageInput.value = "";
       return;
     }
@@ -550,6 +575,7 @@
       return;
     }
 
+    var previousImageData = String(state.imageData || "");
     try {
       var optimized = await optimizeImageForStore(file);
       if (!optimized || optimized.length > MAX_IMAGE_DATA_LENGTH) {
@@ -561,11 +587,15 @@
       saveEditorDraftFromForm();
       showToast("Фото загружено");
     } catch (error) {
-      state.imageData = "";
-      setPreviewImage("");
+      state.imageData = previousImageData;
+      setPreviewImage(previousImageData);
       elements.perfumeImageInput.value = "";
       saveEditorDraftFromForm();
-      showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
+      if (error && error.message === "IMAGE_TOO_LARGE") {
+        showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
+        return;
+      }
+      showToast("Не удалось обработать фото. Используйте JPG или PNG.", true);
     }
   }
 
