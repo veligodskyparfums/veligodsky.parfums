@@ -7,6 +7,7 @@
   }
 
   var AUTH_KEY = "veligodsky_admin_auth";
+  var EDITOR_DRAFT_KEY = "veligodsky_admin_editor_draft_v1";
   var MAX_UPLOAD_FILE_SIZE = 12 * 1024 * 1024;
   var MAX_IMAGE_DATA_LENGTH = 900 * 1024;
   var MAX_IMAGE_DIMENSION = 1200;
@@ -78,6 +79,7 @@
 
     elements.addVolumeBtn.addEventListener("click", function () {
       appendVolumeRow();
+      saveEditorDraftFromForm();
     });
 
     elements.volumesContainer.addEventListener("click", function (event) {
@@ -93,20 +95,33 @@
       if (!elements.volumesContainer.children.length) {
         appendVolumeRow();
       }
+      saveEditorDraftFromForm();
     });
 
     elements.perfumeImageInput.addEventListener("change", handleImageUpload);
     elements.perfumeForm.addEventListener("submit", savePerfume);
     elements.cancelEditBtn.addEventListener("click", resetEditor);
+    elements.perfumeForm.addEventListener("input", saveEditorDraftFromForm);
+    elements.perfumeForm.addEventListener("change", saveEditorDraftFromForm);
 
     elements.adminProductsList.addEventListener("click", onProductListClick);
     elements.adminProductsList.addEventListener("change", onProductListChange);
+    elements.volumesContainer.addEventListener("input", saveEditorDraftFromForm);
+    elements.volumesContainer.addEventListener("change", saveEditorDraftFromForm);
 
     window.addEventListener("focus", function () {
       if (isAuthenticated()) {
         refreshPanelFromServer(false);
       }
     });
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) {
+        saveEditorDraftFromForm();
+      }
+    });
+
+    window.addEventListener("beforeunload", saveEditorDraftFromForm);
   }
 
   function checkAuth() {
@@ -137,7 +152,9 @@
   function refreshPanel() {
     fillSettingsForm();
     renderProducts();
-    resetEditor();
+    if (!restoreEditorFromDraft()) {
+      resetEditor({ keepDraft: true });
+    }
   }
 
   async function refreshPanelFromServer(showErrorToast) {
@@ -267,6 +284,175 @@
     return Array.from(uniqueMap.values());
   }
 
+  function readEditorDraft() {
+    try {
+      var raw = localStorage.getItem(EDITOR_DRAFT_KEY);
+      if (!raw) {
+        return null;
+      }
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+
+      var safeVolumes = Array.isArray(parsed.volumes)
+        ? parsed.volumes.map(function (volume) {
+          if (!volume || typeof volume !== "object") {
+            return null;
+          }
+          return {
+            ml: String(volume.ml || ""),
+            price: String(volume.price || "")
+          };
+        }).filter(Boolean)
+        : [];
+
+      return {
+        editingId: String(parsed.editingId || ""),
+        name: String(parsed.name || ""),
+        brand: String(parsed.brand || ""),
+        gender: String(parsed.gender || "unisex"),
+        description: String(parsed.description || ""),
+        topWeek: Boolean(parsed.topWeek),
+        topMonth: Boolean(parsed.topMonth),
+        imageData: String(parsed.imageData || ""),
+        volumes: safeVolumes
+      };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function writeEditorDraft(draft) {
+    try {
+      localStorage.setItem(EDITOR_DRAFT_KEY, JSON.stringify(draft));
+    } catch (error) {
+      return;
+    }
+  }
+
+  function clearEditorDraft() {
+    try {
+      localStorage.removeItem(EDITOR_DRAFT_KEY);
+    } catch (error) {
+      return;
+    }
+  }
+
+  function getCurrentDraftVolumes() {
+    return Array.prototype.slice.call(elements.volumesContainer.querySelectorAll(".volume-row")).map(function (row) {
+      var mlInput = row.querySelector(".volume-ml");
+      var priceInput = row.querySelector(".volume-price");
+      return {
+        ml: String((mlInput && mlInput.value) || ""),
+        price: String((priceInput && priceInput.value) || "")
+      };
+    });
+  }
+
+  function getCurrentEditorDraft() {
+    return {
+      editingId: String(elements.perfumeIdInput.value || ""),
+      name: String(elements.perfumeNameInput.value || ""),
+      brand: String(elements.perfumeBrandInput.value || ""),
+      gender: String(elements.perfumeGenderInput.value || "unisex"),
+      description: String(elements.perfumeDescriptionInput.value || ""),
+      topWeek: Boolean(elements.topWeekInput.checked),
+      topMonth: Boolean(elements.topMonthInput.checked),
+      imageData: String(state.imageData || ""),
+      volumes: getCurrentDraftVolumes()
+    };
+  }
+
+  function isEditorDraftMeaningful(draft) {
+    if (!draft || typeof draft !== "object") {
+      return false;
+    }
+
+    if (String(draft.editingId || "").trim()) {
+      return true;
+    }
+
+    if (String(draft.name || "").trim() || String(draft.brand || "").trim() || String(draft.description || "").trim()) {
+      return true;
+    }
+
+    if (Boolean(draft.topWeek) || Boolean(draft.topMonth)) {
+      return true;
+    }
+
+    if (String(draft.imageData || "").trim()) {
+      return true;
+    }
+
+    return Array.isArray(draft.volumes) && draft.volumes.some(function (volume) {
+      return String((volume && volume.ml) || "").trim() || String((volume && volume.price) || "").trim();
+    });
+  }
+
+  function saveEditorDraftFromForm() {
+    if (!elements.panelView || elements.panelView.classList.contains("hidden")) {
+      return;
+    }
+
+    var draft = getCurrentEditorDraft();
+    if (!isEditorDraftMeaningful(draft)) {
+      clearEditorDraft();
+      return;
+    }
+
+    writeEditorDraft(draft);
+  }
+
+  function applyEditorDraft(draft) {
+    if (!draft) {
+      return;
+    }
+
+    var gender = String(draft.gender || "unisex");
+    if (["male", "female", "unisex"].indexOf(gender) === -1) {
+      gender = "unisex";
+    }
+
+    state.editingId = String(draft.editingId || "") || null;
+    state.imageData = String(draft.imageData || "");
+
+    elements.editorTitle.textContent = state.editingId ? "Редактировать парфюм" : "Добавить парфюм";
+    elements.perfumeIdInput.value = state.editingId || "";
+    elements.perfumeNameInput.value = String(draft.name || "");
+    elements.perfumeBrandInput.value = String(draft.brand || "");
+    elements.perfumeGenderInput.value = gender;
+    elements.perfumeDescriptionInput.value = String(draft.description || "");
+    elements.topWeekInput.checked = Boolean(draft.topWeek);
+    elements.topMonthInput.checked = Boolean(draft.topMonth);
+    elements.perfumeImageInput.value = "";
+
+    setPreviewImage(state.imageData);
+
+    elements.volumesContainer.innerHTML = "";
+    var volumes = Array.isArray(draft.volumes) && draft.volumes.length
+      ? draft.volumes
+      : [{ ml: "", price: "" }];
+
+    volumes.forEach(function (volume) {
+      appendVolumeRow({
+        ml: String(volume.ml || ""),
+        price: String(volume.price || "")
+      });
+    });
+  }
+
+  function restoreEditorFromDraft() {
+    var draft = readEditorDraft();
+    if (!draft || !isEditorDraftMeaningful(draft)) {
+      clearEditorDraft();
+      return false;
+    }
+
+    applyEditorDraft(draft);
+    return true;
+  }
+
   function readFileAsDataUrl(file) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
@@ -372,11 +558,13 @@
 
       state.imageData = optimized;
       setPreviewImage(state.imageData);
+      saveEditorDraftFromForm();
       showToast("Фото загружено");
     } catch (error) {
       state.imageData = "";
       setPreviewImage("");
       elements.perfumeImageInput.value = "";
+      saveEditorDraftFromForm();
       showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
     }
   }
@@ -459,7 +647,9 @@
     }
   }
 
-  function resetEditor() {
+  function resetEditor(options) {
+    var keepDraft = options && options.keepDraft;
+
     state.editingId = null;
     state.imageData = "";
 
@@ -471,6 +661,10 @@
     appendVolumeRow({ ml: "", price: "" });
 
     setPreviewImage("");
+
+    if (!keepDraft) {
+      clearEditorDraft();
+    }
   }
 
   function startEdit(productId) {
@@ -502,6 +696,7 @@
       appendVolumeRow({ ml: volume.ml, price: volume.price });
     });
 
+    saveEditorDraftFromForm();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
