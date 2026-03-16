@@ -217,6 +217,15 @@ function isDatabaseConfigured() {
   return Boolean(process.env.DATABASE_URL || process.env.DB_HOST);
 }
 
+function isTrueLike(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  return mode === "1" || mode === "true" || mode === "yes" || mode === "on";
+}
+
+function isForceFileStorage() {
+  return isTrueLike(process.env.FORCE_FILE_STORAGE);
+}
+
 function getSslConfig() {
   const mode = String(process.env.DB_SSL || "").trim().toLowerCase();
   if (mode === "1" || mode === "true" || mode === "yes" || mode === "require") {
@@ -263,20 +272,37 @@ function loadPgPool() {
 }
 
 async function createStoreRepository() {
-  if (!isDatabaseConfigured()) {
+  if (isForceFileStorage()) {
     const repository = new FileStoreRepository(DATA_FILE);
     await repository.init();
-    console.log("Storage mode: file (" + DATA_FILE + ")");
+    console.log("Storage mode: file (" + DATA_FILE + "), FORCE_FILE_STORAGE enabled");
     return repository;
   }
 
-  const Pool = loadPgPool();
-  const pool = new Pool(buildDatabaseConfig());
-  const repository = new PostgresStoreRepository(pool);
+  if (isDatabaseConfigured()) {
+    let pool = null;
+    try {
+      const Pool = loadPgPool();
+      pool = new Pool(buildDatabaseConfig());
+      const repository = new PostgresStoreRepository(pool);
+      await repository.init();
+      console.log("Storage mode: PostgreSQL");
+      return repository;
+    } catch (error) {
+      console.error("PostgreSQL init failed. Fallback to file storage. Reason:", error && error.message ? error.message : error);
+      if (pool) {
+        try {
+          await pool.end();
+        } catch (closeError) {
+          console.error("Failed to close PostgreSQL pool after init error:", closeError);
+        }
+      }
+    }
+  }
 
+  const repository = new FileStoreRepository(DATA_FILE);
   await repository.init();
-  console.log("Storage mode: PostgreSQL");
-
+  console.log("Storage mode: file (" + DATA_FILE + ")");
   return repository;
 }
 
