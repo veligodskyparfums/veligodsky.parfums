@@ -1,10 +1,14 @@
-﻿(function () {
+(function () {
   "use strict";
 
   var store = window.VeligodskyStore;
   if (!store) {
     return;
   }
+
+  var MSK_BACKUP_NOTICE_TIMEZONE = "Europe/Moscow";
+  var MSK_BACKUP_NOTICE_START_MINUTE = 15;
+  var MSK_BACKUP_NOTICE_END_MINUTE = 5 * 60;
 
   var state = {
     products: [],
@@ -17,6 +21,8 @@
   var revealObserver = null;
   var toastTimer = null;
   var syncIntervalId = null;
+  var backupNoticeTimerId = null;
+  var moscowTimeFormatter = null;
 
   document.addEventListener("DOMContentLoaded", function () {
     init().catch(function () {
@@ -31,6 +37,7 @@
       initRevealObserver();
       observeRevealElements();
       startAutoSync();
+      startBackupNoticeClock();
       showToast("Работаем офлайн: данные не синхронизированы с сервером.", true);
     });
   });
@@ -52,6 +59,7 @@
     initRevealObserver();
     observeRevealElements();
     startAutoSync();
+    startBackupNoticeClock();
   }
 
   function cacheElements() {
@@ -90,6 +98,7 @@
     elements.footerChannelLink = document.getElementById("footerChannelLink");
     elements.footerDmLink = document.getElementById("footerDmLink");
     elements.freeShippingInline = document.getElementById("freeShippingInline");
+    elements.backupNotice = document.getElementById("backupNotice");
     elements.yearNow = document.getElementById("yearNow");
   }
 
@@ -223,6 +232,70 @@
     if (elements.freeShippingInline) {
       elements.freeShippingInline.textContent = store.formatPrice(settings.freeShippingThreshold);
     }
+
+    applyBackupNoticeVisibility(settings);
+  }
+
+  function getMoscowTimeFormatter() {
+    if (!moscowTimeFormatter) {
+      moscowTimeFormatter = new Intl.DateTimeFormat("ru-RU", {
+        timeZone: MSK_BACKUP_NOTICE_TIMEZONE,
+        hourCycle: "h23",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+    return moscowTimeFormatter;
+  }
+
+  function getMoscowMinutesOfDay(date) {
+    try {
+      var parts = getMoscowTimeFormatter().formatToParts(date || new Date());
+      var hourPart = parts.find(function (part) {
+        return part.type === "hour";
+      });
+      var minutePart = parts.find(function (part) {
+        return part.type === "minute";
+      });
+
+      var hours = Number(hourPart && hourPart.value);
+      var minutes = Number(minutePart && minutePart.value);
+
+      if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+        return 0;
+      }
+
+      return (hours * 60) + minutes;
+    } catch (error) {
+      var localDate = date || new Date();
+      return (localDate.getHours() * 60) + localDate.getMinutes();
+    }
+  }
+
+  function isBackupNoticeScheduleActive(date) {
+    var minutesOfDay = getMoscowMinutesOfDay(date);
+    return minutesOfDay >= MSK_BACKUP_NOTICE_START_MINUTE && minutesOfDay < MSK_BACKUP_NOTICE_END_MINUTE;
+  }
+
+  function applyBackupNoticeVisibility(settings) {
+    if (!elements.backupNotice) {
+      return;
+    }
+
+    var isEnabled = Boolean(settings && settings.backupNoticeEnabled);
+    var isVisible = isEnabled && isBackupNoticeScheduleActive(new Date());
+    elements.backupNotice.classList.toggle("is-active", isVisible);
+    elements.backupNotice.setAttribute("aria-hidden", isVisible ? "false" : "true");
+  }
+
+  function startBackupNoticeClock() {
+    if (backupNoticeTimerId) {
+      clearInterval(backupNoticeTimerId);
+    }
+
+    backupNoticeTimerId = setInterval(function () {
+      applyBackupNoticeVisibility(store.getSettings());
+    }, 30000);
   }
 
   function setCurrentYear() {
