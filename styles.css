@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #080808;
   --bg-soft: #101010;
   --bg-elev: #161616;
@@ -105,6 +105,31 @@ textarea {
   backdrop-filter: blur(12px);
   background: rgba(9, 9, 9, 0.88);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.backup-notice {
+  display: none;
+  position: relative;
+  z-index: 30;
+  background: linear-gradient(90deg, rgba(150, 247, 180, 0.13), rgba(150, 247, 180, 0.03));
+  border-bottom: 1px solid rgba(150, 247, 180, 0.35);
+}
+
+.backup-notice.is-active {
+  display: block;
+}
+
+.backup-notice-inner {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+  color: #d6f9e1;
+}
+
+.backup-notice strong {
+  color: #b6f5cb;
 }
 
 .header-inner {
@@ -1057,6 +1082,16 @@ body.menu-open .nav {
 }
 
 @media (max-width: 600px) {
+  .backup-notice-inner {
+    min-height: 44px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    padding: 7px 0;
+    font-size: 0.8rem;
+  }
+
   .site-footer {
     padding-bottom: 84px;
   }
