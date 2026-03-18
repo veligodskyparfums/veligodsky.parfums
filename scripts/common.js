@@ -22,7 +22,8 @@
     telegramDM: "https://t.me/veligodsky_ls",
     freeShippingThreshold: 8000,
     adminPassword: "admin123",
-    storeName: "VELIGODSKY.PARFUMS"
+    storeName: "VELIGODSKY.PARFUMS",
+    backupNoticeEnabled: true
   };
 
   var defaultProducts = [
@@ -186,6 +187,25 @@
     return Number.isFinite(num) ? num : (fallback || 0);
   }
 
+  function toBoolean(value, fallback) {
+    if (typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "number") {
+      return value !== 0;
+    }
+    if (typeof value === "string") {
+      var safe = value.trim().toLowerCase();
+      if (safe === "true" || safe === "1" || safe === "yes" || safe === "on") {
+        return true;
+      }
+      if (safe === "false" || safe === "0" || safe === "no" || safe === "off") {
+        return false;
+      }
+    }
+    return Boolean(fallback);
+  }
+
   function pickImage(value, idx) {
     if (typeof value === "string" && value.trim()) {
       return value;
@@ -263,6 +283,7 @@
     settings.telegramChannel = String(settings.telegramChannel || defaults.settings.telegramChannel);
     settings.telegramDM = String(settings.telegramDM || defaults.settings.telegramDM);
     settings.adminPassword = String(settings.adminPassword || defaults.settings.adminPassword);
+    settings.backupNoticeEnabled = toBoolean(settings.backupNoticeEnabled, defaults.settings.backupNoticeEnabled);
 
     var products = Array.isArray(safe.products)
       ? safe.products.map(normalizeProduct).filter(Boolean)
@@ -422,6 +443,7 @@
     data.settings = Object.assign({}, data.settings, patch || {});
     data.settings.freeShippingThreshold = Math.max(0, Math.round(toNumber(data.settings.freeShippingThreshold, 8000)));
     data.settings.adminPassword = String(data.settings.adminPassword || "admin123");
+    data.settings.backupNoticeEnabled = toBoolean(data.settings.backupNoticeEnabled, true);
     var saved = await commitData(data);
     return saved.settings;
   }
