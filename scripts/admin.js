@@ -53,6 +53,7 @@
     elements.telegramDmInput = document.getElementById("telegramDmInput");
     elements.freeShippingInput = document.getElementById("freeShippingInput");
     elements.adminPasswordNewInput = document.getElementById("adminPasswordNewInput");
+    elements.backupNoticeEnabledInput = document.getElementById("backupNoticeEnabledInput");
 
     elements.perfumeForm = document.getElementById("perfumeForm");
     elements.editorTitle = document.getElementById("editorTitle");
@@ -205,6 +206,9 @@
     elements.telegramChannelInput.value = settings.telegramChannel;
     elements.telegramDmInput.value = settings.telegramDM;
     elements.freeShippingInput.value = String(settings.freeShippingThreshold);
+    if (elements.backupNoticeEnabledInput) {
+      elements.backupNoticeEnabledInput.checked = Boolean(settings.backupNoticeEnabled);
+    }
     elements.adminPasswordNewInput.value = "";
   }
 
@@ -215,11 +219,15 @@
     var dm = String(elements.telegramDmInput.value || "").trim();
     var freeShippingThreshold = Math.max(0, Math.round(Number(elements.freeShippingInput.value) || 0));
     var newAdminPassword = String(elements.adminPasswordNewInput.value || "").trim();
+    var backupNoticeEnabled = elements.backupNoticeEnabledInput
+      ? Boolean(elements.backupNoticeEnabledInput.checked)
+      : true;
 
     var patch = {
       telegramChannel: channel,
       telegramDM: dm,
-      freeShippingThreshold: freeShippingThreshold
+      freeShippingThreshold: freeShippingThreshold,
+      backupNoticeEnabled: backupNoticeEnabled
     };
 
     if (newAdminPassword) {
