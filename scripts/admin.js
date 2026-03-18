@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
   "use strict";
 
   var store = window.VeligodskyStore;
@@ -7,6 +7,8 @@
   }
 
   var AUTH_KEY = "veligodsky_admin_auth";
+  var EDITOR_DRAFT_KEY = "veligodsky_admin_editor_draft_v1";
+  var EDITOR_DRAFT_FALLBACK_KEY = "veligodsky_admin_editor_draft_v1_session";
   var MAX_UPLOAD_FILE_SIZE = 12 * 1024 * 1024;
   var MAX_IMAGE_DATA_LENGTH = 900 * 1024;
   var MAX_IMAGE_DIMENSION = 1200;
@@ -16,7 +18,8 @@
 
   var state = {
     editingId: null,
-    imageData: ""
+    imageData: "",
+    draftMemory: null
   };
 
   var elements = {};
@@ -78,6 +81,7 @@
 
     elements.addVolumeBtn.addEventListener("click", function () {
       appendVolumeRow();
+      saveEditorDraftFromForm();
     });
 
     elements.volumesContainer.addEventListener("click", function (event) {
@@ -93,20 +97,33 @@
       if (!elements.volumesContainer.children.length) {
         appendVolumeRow();
       }
+      saveEditorDraftFromForm();
     });
 
     elements.perfumeImageInput.addEventListener("change", handleImageUpload);
     elements.perfumeForm.addEventListener("submit", savePerfume);
     elements.cancelEditBtn.addEventListener("click", resetEditor);
+    elements.perfumeForm.addEventListener("input", saveEditorDraftFromForm);
+    elements.perfumeForm.addEventListener("change", saveEditorDraftFromForm);
 
     elements.adminProductsList.addEventListener("click", onProductListClick);
     elements.adminProductsList.addEventListener("change", onProductListChange);
+    elements.volumesContainer.addEventListener("input", saveEditorDraftFromForm);
+    elements.volumesContainer.addEventListener("change", saveEditorDraftFromForm);
 
     window.addEventListener("focus", function () {
       if (isAuthenticated()) {
-        refreshPanelFromServer(false);
+        saveEditorDraftFromForm();
       }
     });
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) {
+        saveEditorDraftFromForm();
+      }
+    });
+
+    window.addEventListener("beforeunload", saveEditorDraftFromForm);
   }
 
   function checkAuth() {
@@ -137,10 +154,13 @@
   function refreshPanel() {
     fillSettingsForm();
     renderProducts();
-    resetEditor();
+    if (!restoreEditorFromDraft()) {
+      resetEditor({ keepDraft: true });
+    }
   }
 
   async function refreshPanelFromServer(showErrorToast) {
+    saveEditorDraftFromForm();
     if (typeof store.syncFromServer === "function") {
       try {
         await store.syncFromServer();
@@ -267,6 +287,232 @@
     return Array.from(uniqueMap.values());
   }
 
+  function cloneDraft(value) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function readEditorDraft() {
+    var raw = "";
+    try {
+      raw = localStorage.getItem(EDITOR_DRAFT_KEY) || "";
+    } catch (error) {
+      raw = "";
+    }
+
+    if (!raw) {
+      try {
+        raw = sessionStorage.getItem(EDITOR_DRAFT_FALLBACK_KEY) || "";
+      } catch (error) {
+        raw = "";
+      }
+    }
+
+    if (!raw) {
+      return state.draftMemory ? cloneDraft(state.draftMemory) : null;
+    }
+
+    try {
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+
+      var safeVolumes = Array.isArray(parsed.volumes)
+        ? parsed.volumes.map(function (volume) {
+          if (!volume || typeof volume !== "object") {
+            return null;
+          }
+          return {
+            ml: String(volume.ml || ""),
+            price: String(volume.price || "")
+          };
+        }).filter(Boolean)
+        : [];
+
+      var safeDraft = {
+        editingId: String(parsed.editingId || ""),
+        name: String(parsed.name || ""),
+        brand: String(parsed.brand || ""),
+        gender: String(parsed.gender || "unisex"),
+        description: String(parsed.description || ""),
+        topWeek: Boolean(parsed.topWeek),
+        topMonth: Boolean(parsed.topMonth),
+        imageData: String(parsed.imageData || ""),
+        volumes: safeVolumes
+      };
+      state.draftMemory = cloneDraft(safeDraft);
+      return safeDraft;
+    } catch (error) {
+      return state.draftMemory ? cloneDraft(state.draftMemory) : null;
+    }
+  }
+
+  function writeEditorDraft(draft) {
+    state.draftMemory = cloneDraft(draft);
+    var serialized = "";
+    try {
+      serialized = JSON.stringify(draft);
+    } catch (error) {
+      return;
+    }
+
+    var stored = false;
+    try {
+      localStorage.setItem(EDITOR_DRAFT_KEY, serialized);
+      stored = true;
+    } catch (error) {
+      stored = false;
+    }
+
+    if (stored) {
+      try {
+        sessionStorage.removeItem(EDITOR_DRAFT_FALLBACK_KEY);
+      } catch (error) {
+        return;
+      }
+      return;
+    }
+
+    try {
+      sessionStorage.setItem(EDITOR_DRAFT_FALLBACK_KEY, serialized);
+    } catch (error) {
+      return;
+    }
+  }
+
+  function clearEditorDraft() {
+    state.draftMemory = null;
+    try {
+      localStorage.removeItem(EDITOR_DRAFT_KEY);
+    } catch (error) {
+      // ignore
+    }
+
+    try {
+      sessionStorage.removeItem(EDITOR_DRAFT_FALLBACK_KEY);
+    } catch (error) {
+      // ignore
+    }
+  }
+
+  function getCurrentDraftVolumes() {
+    return Array.prototype.slice.call(elements.volumesContainer.querySelectorAll(".volume-row")).map(function (row) {
+      var mlInput = row.querySelector(".volume-ml");
+      var priceInput = row.querySelector(".volume-price");
+      return {
+        ml: String((mlInput && mlInput.value) || ""),
+        price: String((priceInput && priceInput.value) || "")
+      };
+    });
+  }
+
+  function getCurrentEditorDraft() {
+    return {
+      editingId: String(elements.perfumeIdInput.value || ""),
+      name: String(elements.perfumeNameInput.value || ""),
+      brand: String(elements.perfumeBrandInput.value || ""),
+      gender: String(elements.perfumeGenderInput.value || "unisex"),
+      description: String(elements.perfumeDescriptionInput.value || ""),
+      topWeek: Boolean(elements.topWeekInput.checked),
+      topMonth: Boolean(elements.topMonthInput.checked),
+      imageData: String(state.imageData || ""),
+      volumes: getCurrentDraftVolumes()
+    };
+  }
+
+  function isEditorDraftMeaningful(draft) {
+    if (!draft || typeof draft !== "object") {
+      return false;
+    }
+
+    if (String(draft.editingId || "").trim()) {
+      return true;
+    }
+
+    if (String(draft.name || "").trim() || String(draft.brand || "").trim() || String(draft.description || "").trim()) {
+      return true;
+    }
+
+    if (Boolean(draft.topWeek) || Boolean(draft.topMonth)) {
+      return true;
+    }
+
+    if (String(draft.imageData || "").trim()) {
+      return true;
+    }
+
+    return Array.isArray(draft.volumes) && draft.volumes.some(function (volume) {
+      return String((volume && volume.ml) || "").trim() || String((volume && volume.price) || "").trim();
+    });
+  }
+
+  function saveEditorDraftFromForm() {
+    if (!elements.panelView || elements.panelView.classList.contains("hidden")) {
+      return;
+    }
+
+    var draft = getCurrentEditorDraft();
+    if (!isEditorDraftMeaningful(draft)) {
+      clearEditorDraft();
+      return;
+    }
+
+    writeEditorDraft(draft);
+  }
+
+  function applyEditorDraft(draft) {
+    if (!draft) {
+      return;
+    }
+
+    var gender = String(draft.gender || "unisex");
+    if (["male", "female", "unisex"].indexOf(gender) === -1) {
+      gender = "unisex";
+    }
+
+    state.editingId = String(draft.editingId || "") || null;
+    state.imageData = String(draft.imageData || "");
+
+    elements.editorTitle.textContent = state.editingId ? "Редактировать парфюм" : "Добавить парфюм";
+    elements.perfumeIdInput.value = state.editingId || "";
+    elements.perfumeNameInput.value = String(draft.name || "");
+    elements.perfumeBrandInput.value = String(draft.brand || "");
+    elements.perfumeGenderInput.value = gender;
+    elements.perfumeDescriptionInput.value = String(draft.description || "");
+    elements.topWeekInput.checked = Boolean(draft.topWeek);
+    elements.topMonthInput.checked = Boolean(draft.topMonth);
+    elements.perfumeImageInput.value = "";
+
+    setPreviewImage(state.imageData);
+
+    elements.volumesContainer.innerHTML = "";
+    var volumes = Array.isArray(draft.volumes) && draft.volumes.length
+      ? draft.volumes
+      : [{ ml: "", price: "" }];
+
+    volumes.forEach(function (volume) {
+      appendVolumeRow({
+        ml: String(volume.ml || ""),
+        price: String(volume.price || "")
+      });
+    });
+  }
+
+  function restoreEditorFromDraft() {
+    var draft = readEditorDraft();
+    if (!draft || !isEditorDraftMeaningful(draft)) {
+      clearEditorDraft();
+      return false;
+    }
+
+    applyEditorDraft(draft);
+    return true;
+  }
+
   function readFileAsDataUrl(file) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
@@ -352,8 +598,15 @@
       return;
     }
 
-    if (!String(file.type).startsWith("image/")) {
+    var fileType = String(file.type || "").toLowerCase();
+    if (!String(fileType).startsWith("image/")) {
       showToast("Выберите файл изображения.", true);
+      elements.perfumeImageInput.value = "";
+      return;
+    }
+
+    if (fileType.indexOf("heic") >= 0 || fileType.indexOf("heif") >= 0) {
+      showToast("Формат HEIC/HEIF не поддерживается. Сохраните фото как JPG/PNG.", true);
       elements.perfumeImageInput.value = "";
       return;
     }
@@ -364,6 +617,7 @@
       return;
     }
 
+    var previousImageData = String(state.imageData || "");
     try {
       var optimized = await optimizeImageForStore(file);
       if (!optimized || optimized.length > MAX_IMAGE_DATA_LENGTH) {
@@ -372,12 +626,18 @@
 
       state.imageData = optimized;
       setPreviewImage(state.imageData);
+      saveEditorDraftFromForm();
       showToast("Фото загружено");
     } catch (error) {
-      state.imageData = "";
-      setPreviewImage("");
+      state.imageData = previousImageData;
+      setPreviewImage(previousImageData);
       elements.perfumeImageInput.value = "";
-      showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
+      saveEditorDraftFromForm();
+      if (error && error.message === "IMAGE_TOO_LARGE") {
+        showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
+        return;
+      }
+      showToast("Не удалось обработать фото. Используйте JPG или PNG.", true);
     }
   }
 
@@ -459,7 +719,9 @@
     }
   }
 
-  function resetEditor() {
+  function resetEditor(options) {
+    var keepDraft = options && options.keepDraft;
+
     state.editingId = null;
     state.imageData = "";
 
@@ -471,6 +733,10 @@
     appendVolumeRow({ ml: "", price: "" });
 
     setPreviewImage("");
+
+    if (!keepDraft) {
+      clearEditorDraft();
+    }
   }
 
   function startEdit(productId) {
@@ -502,6 +768,7 @@
       appendVolumeRow({ ml: volume.ml, price: volume.price });
     });
 
+    saveEditorDraftFromForm();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
