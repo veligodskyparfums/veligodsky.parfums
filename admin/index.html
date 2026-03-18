@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
@@ -58,6 +58,14 @@
             <span>Новый пароль админки</span>
             <input type="text" id="adminPasswordNewInput" placeholder="Оставьте пустым, чтобы не менять">
           </label>
+
+          <div class="field">
+            <span>Плашка о бэкапах на сайте</span>
+            <label class="toggle-inline">
+              <input type="checkbox" id="backupNoticeEnabledInput">
+              Включено (показывается автоматически с 00:15 до 05:00 по МСК)
+            </label>
+          </div>
 
           <button class="btn btn-primary" type="submit">Сохранить настройки</button>
         </form>
