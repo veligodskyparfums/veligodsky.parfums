@@ -33,7 +33,8 @@ const FALLBACK_DATA = {
     telegramDM: "https://t.me/veligodsky_ls",
     freeShippingThreshold: 8000,
     adminPassword: "admin123",
-    storeName: "VELIGODSKY.PARFUMS"
+    storeName: "VELIGODSKY.PARFUMS",
+    backupNoticeEnabled: true
   },
   products: []
 };
