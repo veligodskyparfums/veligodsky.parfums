@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
   "use strict";
 
   var DATA_KEY = "veligodsky_data_v1";
@@ -276,7 +276,11 @@
 
   function saveData(data) {
     var normalized = normalizeData(data);
-    localStorage.setItem(DATA_KEY, JSON.stringify(normalized));
+    try {
+      localStorage.setItem(DATA_KEY, JSON.stringify(normalized));
+    } catch (error) {
+      // Keep working with in-memory cache when browser storage quota is exceeded.
+    }
     dataCache = normalized;
     return normalized;
   }
@@ -285,11 +289,15 @@
     try {
       var raw = localStorage.getItem(DATA_KEY);
       if (!raw) {
-        return saveData(getDefaultData());
+        var defaults = getDefaultData();
+        dataCache = defaults;
+        return defaults;
       }
       return saveData(JSON.parse(raw));
     } catch (error) {
-      return saveData(getDefaultData());
+      var fallback = getDefaultData();
+      dataCache = fallback;
+      return fallback;
     }
   }
 
@@ -468,7 +476,11 @@
 
   function saveCart(cart) {
     var safeCart = Array.isArray(cart) ? cart.map(normalizeCartItem).filter(Boolean) : [];
-    localStorage.setItem(CART_KEY, JSON.stringify(safeCart));
+    try {
+      localStorage.setItem(CART_KEY, JSON.stringify(safeCart));
+    } catch (error) {
+      return safeCart;
+    }
     return safeCart;
   }
 
@@ -557,11 +569,19 @@
   }
 
   function getSampleChoice() {
-    return localStorage.getItem(SAMPLE_KEY) || "";
+    try {
+      return localStorage.getItem(SAMPLE_KEY) || "";
+    } catch (error) {
+      return "";
+    }
   }
 
   function saveSampleChoice(value) {
-    localStorage.setItem(SAMPLE_KEY, String(value || "").trim());
+    try {
+      localStorage.setItem(SAMPLE_KEY, String(value || "").trim());
+    } catch (error) {
+      return;
+    }
   }
 
   function formatPrice(value) {
