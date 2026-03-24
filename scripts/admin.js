@@ -136,7 +136,13 @@
   }
 
   function isAuthenticated() {
-    return sessionStorage.getItem(AUTH_KEY) === "1";
+    if (sessionStorage.getItem(AUTH_KEY) !== "1") {
+      return false;
+    }
+    if (typeof store.hasAdminSession === "function") {
+      return store.hasAdminSession();
+    }
+    return true;
   }
 
   function openPanel() {
@@ -166,6 +172,11 @@
       try {
         await store.syncFromServer();
       } catch (error) {
+        if (String(error && error.message || "").indexOf("401") >= 0) {
+          logout();
+          showToast("Сессия администратора истекла. Войдите снова.", true);
+          return;
+        }
         if (showErrorToast) {
           showToast("Не удалось обновить данные с сервера.", true);
         }
@@ -176,17 +187,28 @@
 
   async function onLogin(event) {
     event.preventDefault();
-    if (typeof store.syncFromServer === "function") {
-      try {
-        await store.syncFromServer();
-      } catch (error) {
-        showToast("Сервер недоступен, вход по локальным данным.", true);
-      }
-    }
     var inputPassword = String(elements.passwordInput.value || "").trim();
-    var currentPassword = store.getSettings().adminPassword;
+    if (!inputPassword) {
+      showToast("Введите пароль.", true);
+      return;
+    }
 
-    if (inputPassword !== currentPassword) {
+    if (typeof store.loginAdmin !== "function") {
+      showToast("Обновите scripts/common.js на сервере.", true);
+      return;
+    }
+
+    try {
+      await store.loginAdmin(inputPassword);
+    } catch (error) {
+      if (String(error && error.message || "").indexOf("INVALID_CREDENTIALS") >= 0) {
+        showToast("Неверный пароль.", true);
+        return;
+      }
+      if (String(error && error.message || "").indexOf("HTTP") >= 0) {
+        showToast("Сервер входа недоступен. Проверьте деплой.", true);
+        return;
+      }
       showToast("Неверный пароль.", true);
       return;
     }
@@ -198,6 +220,9 @@
 
   function logout() {
     sessionStorage.removeItem(AUTH_KEY);
+    if (typeof store.logoutAdmin === "function") {
+      store.logoutAdmin();
+    }
     openLogin();
   }
 
