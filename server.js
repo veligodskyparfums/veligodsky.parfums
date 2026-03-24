@@ -14,6 +14,8 @@ const DATA_FILE = path.join(DATA_DIR, "store-data.json");
 const DB_TABLE = "store_state";
 const MAX_BODY_SIZE = 30 * 1024 * 1024;
 const ADMIN_SESSION_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.ADMIN_SESSION_TTL_MS || 24 * 60 * 60 * 1000));
+const MIN_ADMIN_PASSWORD_LENGTH = 6;
+const MAX_ADMIN_PASSWORD_LENGTH = 128;
 
 const CONTENT_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -89,15 +91,8 @@ function sanitizePublicStoreData(data) {
 
 function ensureIncomingAdminPassword(payload, currentData) {
   const next = cloneData(validateStoreData(payload));
-  const incomingPassword = safeString(next.settings && next.settings.adminPassword);
   const currentPassword = readAdminPassword(currentData);
-
-  if (!incomingPassword) {
-    next.settings.adminPassword = currentPassword;
-    return next;
-  }
-
-  next.settings.adminPassword = incomingPassword;
+  next.settings.adminPassword = currentPassword;
   return next;
 }
 
@@ -557,6 +552,66 @@ async function handleAdminAuthApi(req, res) {
   });
 }
 
+async function handleAdminPasswordApi(req, res) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  let raw;
+  let parsed;
+
+  try {
+    raw = await readRequestBody(req);
+  } catch (error) {
+    if (error.message === "BODY_TOO_LARGE") {
+      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    parsed = JSON.parse(raw || "{}");
+  } catch (error) {
+    sendJson(res, 400, { error: "INVALID_JSON" });
+    return;
+  }
+
+  const newPassword = safeString((parsed && (parsed.newPassword || parsed.password)) || "");
+  if (!newPassword) {
+    sendJson(res, 400, { error: "PASSWORD_REQUIRED" });
+    return;
+  }
+
+  if (newPassword.length < MIN_ADMIN_PASSWORD_LENGTH) {
+    sendJson(res, 400, { error: "PASSWORD_TOO_SHORT", minLength: MIN_ADMIN_PASSWORD_LENGTH });
+    return;
+  }
+
+  if (newPassword.length > MAX_ADMIN_PASSWORD_LENGTH) {
+    sendJson(res, 400, { error: "PASSWORD_TOO_LONG", maxLength: MAX_ADMIN_PASSWORD_LENGTH });
+    return;
+  }
+
+  const currentData = await storeRepository.read();
+  const nextData = cloneData(validateStoreData(currentData));
+  nextData.settings.adminPassword = newPassword;
+  await storeRepository.write(nextData);
+
+  revokeAdminSessions(getBearerToken(req));
+  sendJson(res, 200, { ok: true });
+}
+
 function getSafeFilePath(urlPathname) {
   let pathname = urlPathname;
 
@@ -633,6 +688,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/admin/auth") {
       await handleAdminAuthApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/admin/password") {
+      await handleAdminPasswordApi(req, res);
       return;
     }
 
