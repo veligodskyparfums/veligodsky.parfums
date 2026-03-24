@@ -255,15 +255,24 @@
       backupNoticeEnabled: backupNoticeEnabled
     };
 
-    if (newAdminPassword) {
-      patch.adminPassword = newAdminPassword;
-    }
-
     try {
       await store.updateSettings(patch);
+
+      if (newAdminPassword) {
+        if (typeof store.changeAdminPassword !== "function") {
+          throw new Error("PASSWORD_ENDPOINT_UNAVAILABLE");
+        }
+        await store.changeAdminPassword(newAdminPassword);
+      }
+
       elements.adminPasswordNewInput.value = "";
-      showToast("Настройки сохранены");
+      showToast(newAdminPassword ? "Настройки и пароль сохранены" : "Настройки сохранены");
     } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
       showToast("Не удалось сохранить настройки на сервер.", true);
     }
   }
