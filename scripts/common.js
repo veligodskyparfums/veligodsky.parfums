@@ -6,6 +6,7 @@
   var SAMPLE_KEY = "veligodsky_sample_v1";
   var API_DATA_URL = "/api/store-data";
   var API_ADMIN_AUTH_URL = "/api/admin/auth";
+  var API_ADMIN_PASSWORD_URL = "/api/admin/password";
   var ADMIN_TOKEN_KEY = "veligodsky_admin_token_v1";
   var numberFormatter = new Intl.NumberFormat("ru-RU");
   var dataCache = null;
@@ -285,10 +286,7 @@
     settings.telegramChannel = String(settings.telegramChannel || defaults.settings.telegramChannel);
     settings.telegramDM = String(settings.telegramDM || defaults.settings.telegramDM);
     if (Object.prototype.hasOwnProperty.call(settings, "adminPassword")) {
-      settings.adminPassword = String(settings.adminPassword || "").trim();
-      if (!settings.adminPassword) {
-        delete settings.adminPassword;
-      }
+      delete settings.adminPassword;
     }
     settings.backupNoticeEnabled = toBoolean(settings.backupNoticeEnabled, defaults.settings.backupNoticeEnabled);
 
@@ -426,6 +424,39 @@
 
   function logoutAdmin() {
     clearStoredAdminToken();
+  }
+
+  async function changeAdminPassword(nextPassword) {
+    var safePassword = String(nextPassword || "").trim();
+    if (!safePassword) {
+      throw new Error("PASSWORD_REQUIRED");
+    }
+
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var response = await fetch(API_ADMIN_PASSWORD_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      },
+      body: JSON.stringify({ newPassword: safePassword })
+    });
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    return true;
   }
 
   async function fetchRemoteData() {
@@ -782,11 +813,13 @@
     SAMPLE_KEY: SAMPLE_KEY,
     API_DATA_URL: API_DATA_URL,
     API_ADMIN_AUTH_URL: API_ADMIN_AUTH_URL,
+    API_ADMIN_PASSWORD_URL: API_ADMIN_PASSWORD_URL,
     init: init,
     syncFromServer: syncFromServer,
     loginAdmin: loginAdmin,
     logoutAdmin: logoutAdmin,
     hasAdminSession: hasAdminSession,
+    changeAdminPassword: changeAdminPassword,
     uid: uid,
     getDefaultData: getDefaultData,
     loadData: loadData,
