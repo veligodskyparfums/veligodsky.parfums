@@ -5,9 +5,12 @@
   var CART_KEY = "veligodsky_cart_v1";
   var SAMPLE_KEY = "veligodsky_sample_v1";
   var API_DATA_URL = "/api/store-data";
+  var API_ADMIN_AUTH_URL = "/api/admin/auth";
+  var ADMIN_TOKEN_KEY = "veligodsky_admin_token_v1";
   var numberFormatter = new Intl.NumberFormat("ru-RU");
   var dataCache = null;
   var syncPromise = null;
+  var adminTokenMemory = "";
 
   var placeholderImages = [
     "https://images.unsplash.com/photo-1595425970377-c9703cf48b6d?auto=format&fit=crop&w=900&q=80",
@@ -21,7 +24,6 @@
     telegramChannel: "https://t.me/veligodsky_ls",
     telegramDM: "https://t.me/veligodsky_ls",
     freeShippingThreshold: 8000,
-    adminPassword: "admin123",
     storeName: "VELIGODSKY.PARFUMS",
     backupNoticeEnabled: true
   };
@@ -282,7 +284,12 @@
     settings.freeShippingThreshold = Math.max(0, Math.round(toNumber(settings.freeShippingThreshold, defaults.settings.freeShippingThreshold)));
     settings.telegramChannel = String(settings.telegramChannel || defaults.settings.telegramChannel);
     settings.telegramDM = String(settings.telegramDM || defaults.settings.telegramDM);
-    settings.adminPassword = String(settings.adminPassword || defaults.settings.adminPassword);
+    if (Object.prototype.hasOwnProperty.call(settings, "adminPassword")) {
+      settings.adminPassword = String(settings.adminPassword || "").trim();
+      if (!settings.adminPassword) {
+        delete settings.adminPassword;
+      }
+    }
     settings.backupNoticeEnabled = toBoolean(settings.backupNoticeEnabled, defaults.settings.backupNoticeEnabled);
 
     var products = Array.isArray(safe.products)
@@ -339,6 +346,88 @@
     return /^https?:$/i.test(window.location.protocol);
   }
 
+  function getStoredAdminToken() {
+    if (adminTokenMemory) {
+      return adminTokenMemory;
+    }
+
+    try {
+      adminTokenMemory = String(sessionStorage.getItem(ADMIN_TOKEN_KEY) || "").trim();
+    } catch (error) {
+      adminTokenMemory = "";
+    }
+
+    return adminTokenMemory;
+  }
+
+  function setStoredAdminToken(token) {
+    adminTokenMemory = String(token || "").trim();
+    try {
+      if (adminTokenMemory) {
+        sessionStorage.setItem(ADMIN_TOKEN_KEY, adminTokenMemory);
+      } else {
+        sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+      }
+    } catch (error) {
+      return;
+    }
+  }
+
+  function clearStoredAdminToken() {
+    adminTokenMemory = "";
+    try {
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    } catch (error) {
+      return;
+    }
+  }
+
+  function hasAdminSession() {
+    return Boolean(getStoredAdminToken());
+  }
+
+  async function loginAdmin(password) {
+    var safePassword = String(password || "").trim();
+    if (!safePassword) {
+      throw new Error("PASSWORD_REQUIRED");
+    }
+
+    if (!canUseRemoteStore()) {
+      throw new Error("REMOTE_STORE_REQUIRED");
+    }
+
+    var response = await fetch(API_ADMIN_AUTH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify({ password: safePassword })
+    });
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("INVALID_CREDENTIALS");
+    }
+
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var payload = await response.json();
+    var token = String(payload && payload.token || "").trim();
+    if (!token) {
+      throw new Error("INVALID_AUTH_RESPONSE");
+    }
+
+    setStoredAdminToken(token);
+    return true;
+  }
+
+  function logoutAdmin() {
+    clearStoredAdminToken();
+  }
+
   async function fetchRemoteData() {
     var response = await fetch(API_DATA_URL + "?ts=" + Date.now(), {
       method: "GET",
@@ -357,14 +446,24 @@
   }
 
   async function pushRemoteData(data) {
+    var headers = {
+      "Content-Type": "application/json",
+      "Accept": "application/json"
+    };
+    var adminToken = getStoredAdminToken();
+    if (adminToken) {
+      headers.Authorization = "Bearer " + adminToken;
+    }
+
     var response = await fetch(API_DATA_URL, {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-      },
+      headers: headers,
       body: JSON.stringify(normalizeData(data))
     });
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+    }
 
     if (!response.ok) {
       throw new Error("HTTP " + response.status);
@@ -442,7 +541,6 @@
     var data = loadData();
     data.settings = Object.assign({}, data.settings, patch || {});
     data.settings.freeShippingThreshold = Math.max(0, Math.round(toNumber(data.settings.freeShippingThreshold, 8000)));
-    data.settings.adminPassword = String(data.settings.adminPassword || "admin123");
     data.settings.backupNoticeEnabled = toBoolean(data.settings.backupNoticeEnabled, true);
     var saved = await commitData(data);
     return saved.settings;
@@ -683,8 +781,12 @@
     CART_KEY: CART_KEY,
     SAMPLE_KEY: SAMPLE_KEY,
     API_DATA_URL: API_DATA_URL,
+    API_ADMIN_AUTH_URL: API_ADMIN_AUTH_URL,
     init: init,
     syncFromServer: syncFromServer,
+    loginAdmin: loginAdmin,
+    logoutAdmin: logoutAdmin,
+    hasAdminSession: hasAdminSession,
     uid: uid,
     getDefaultData: getDefaultData,
     loadData: loadData,
