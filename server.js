@@ -4,6 +4,7 @@ const http = require("http");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
+const crypto = require("crypto");
 
 const HOST = "0.0.0.0";
 const PORT = Number(process.env.PORT) || 3000;
@@ -12,6 +13,7 @@ const DATA_DIR = path.join(ROOT_DIR, "data");
 const DATA_FILE = path.join(DATA_DIR, "store-data.json");
 const DB_TABLE = "store_state";
 const MAX_BODY_SIZE = 30 * 1024 * 1024;
+const ADMIN_SESSION_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.ADMIN_SESSION_TTL_MS || 24 * 60 * 60 * 1000));
 
 const CONTENT_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -42,6 +44,7 @@ const FALLBACK_DATA = {
 let storeRepository = null;
 let httpServer = null;
 let shuttingDown = false;
+const adminSessions = new Map();
 
 function cloneData(data) {
   return JSON.parse(JSON.stringify(data));
@@ -62,6 +65,116 @@ function sendText(res, statusCode, text) {
     "Content-Type": "text/plain; charset=utf-8"
   });
   res.end(text);
+}
+
+function safeString(value) {
+  return String(value || "").trim();
+}
+
+function readAdminPassword(data) {
+  const fromData = safeString(data && data.settings && data.settings.adminPassword);
+  if (fromData) {
+    return fromData;
+  }
+  return safeString(FALLBACK_DATA.settings.adminPassword || "admin123");
+}
+
+function sanitizePublicStoreData(data) {
+  const safe = cloneData(validateStoreData(data));
+  if (safe.settings && Object.prototype.hasOwnProperty.call(safe.settings, "adminPassword")) {
+    delete safe.settings.adminPassword;
+  }
+  return safe;
+}
+
+function ensureIncomingAdminPassword(payload, currentData) {
+  const next = cloneData(validateStoreData(payload));
+  const incomingPassword = safeString(next.settings && next.settings.adminPassword);
+  const currentPassword = readAdminPassword(currentData);
+
+  if (!incomingPassword) {
+    next.settings.adminPassword = currentPassword;
+    return next;
+  }
+
+  next.settings.adminPassword = incomingPassword;
+  return next;
+}
+
+function safeCompareStrings(left, right) {
+  const leftValue = Buffer.from(String(left || ""), "utf8");
+  const rightValue = Buffer.from(String(right || ""), "utf8");
+  const maxLength = Math.max(leftValue.length, rightValue.length, 1);
+  const leftBuffer = Buffer.alloc(maxLength, 0);
+  const rightBuffer = Buffer.alloc(maxLength, 0);
+  leftValue.copy(leftBuffer);
+  rightValue.copy(rightBuffer);
+  const areEqual = crypto.timingSafeEqual(leftBuffer, rightBuffer);
+  return areEqual && leftValue.length === rightValue.length;
+}
+
+function cleanupExpiredAdminSessions() {
+  const now = Date.now();
+  for (const [token, expiresAt] of adminSessions.entries()) {
+    if (!expiresAt || expiresAt <= now) {
+      adminSessions.delete(token);
+    }
+  }
+}
+
+function createAdminSession() {
+  cleanupExpiredAdminSessions();
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
+  adminSessions.set(token, expiresAt);
+  return { token, expiresAt };
+}
+
+function getBearerToken(req) {
+  const header = safeString(req.headers && req.headers.authorization);
+  if (!header) {
+    return "";
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match) {
+    return "";
+  }
+  return safeString(match[1]);
+}
+
+function isAdminSessionValid(token) {
+  cleanupExpiredAdminSessions();
+  if (!token) {
+    return false;
+  }
+  const expiresAt = adminSessions.get(token);
+  if (!expiresAt || expiresAt <= Date.now()) {
+    adminSessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function ensureAdminAuthorized(req, res) {
+  const token = getBearerToken(req);
+  if (!isAdminSessionValid(token)) {
+    sendJson(res, 401, { error: "UNAUTHORIZED" });
+    return false;
+  }
+  return true;
+}
+
+function revokeAdminSessions(keepToken) {
+  const keep = safeString(keepToken);
+  if (!keep) {
+    adminSessions.clear();
+    return;
+  }
+  for (const token of adminSessions.keys()) {
+    if (token !== keep) {
+      adminSessions.delete(token);
+    }
+  }
 }
 
 function handleHealthCheck(req, res) {
@@ -338,11 +451,15 @@ async function handleStoreApi(req, res) {
 
   if (req.method === "GET") {
     const data = await storeRepository.read();
-    sendJson(res, 200, data);
+    sendJson(res, 200, sanitizePublicStoreData(data));
     return;
   }
 
   if (req.method === "PUT") {
+    if (!ensureAdminAuthorized(req, res)) {
+      return;
+    }
+
     let raw;
     let parsed;
 
@@ -364,8 +481,16 @@ async function handleStoreApi(req, res) {
     }
 
     try {
-      const saved = await storeRepository.write(parsed);
-      sendJson(res, 200, saved);
+      const currentData = await storeRepository.read();
+      const nextPayload = ensureIncomingAdminPassword(parsed, currentData);
+      const passwordWasChanged = readAdminPassword(nextPayload) !== readAdminPassword(currentData);
+      const saved = await storeRepository.write(nextPayload);
+
+      if (passwordWasChanged) {
+        revokeAdminSessions(getBearerToken(req));
+      }
+
+      sendJson(res, 200, sanitizePublicStoreData(saved));
     } catch (error) {
       if (error.message === "INVALID_PAYLOAD") {
         sendJson(res, 400, { error: "INVALID_PAYLOAD" });
@@ -378,6 +503,58 @@ async function handleStoreApi(req, res) {
   }
 
   sendText(res, 405, "Method Not Allowed");
+}
+
+async function handleAdminAuthApi(req, res) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  let raw;
+  let parsed;
+
+  try {
+    raw = await readRequestBody(req);
+  } catch (error) {
+    if (error.message === "BODY_TOO_LARGE") {
+      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    parsed = JSON.parse(raw || "{}");
+  } catch (error) {
+    sendJson(res, 400, { error: "INVALID_JSON" });
+    return;
+  }
+
+  const password = safeString(parsed && parsed.password);
+  if (!password) {
+    sendJson(res, 400, { error: "PASSWORD_REQUIRED" });
+    return;
+  }
+
+  const currentData = await storeRepository.read();
+  const currentPassword = readAdminPassword(currentData);
+  if (!safeCompareStrings(password, currentPassword)) {
+    sendJson(res, 401, { error: "INVALID_CREDENTIALS" });
+    return;
+  }
+
+  const session = createAdminSession();
+  sendJson(res, 200, {
+    ok: true,
+    token: session.token,
+    expiresAt: session.expiresAt
+  });
 }
 
 function getSafeFilePath(urlPathname) {
@@ -451,6 +628,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/store-data") {
       await handleStoreApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/admin/auth") {
+      await handleAdminAuthApi(req, res);
       return;
     }
 
