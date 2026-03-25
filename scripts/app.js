@@ -536,6 +536,10 @@
       }
 
       renderCart();
+      trackEvent("add_to_cart", {
+        product_id: productId,
+        volume_ml: selectedMl
+      });
       showToast("Товар добавлен в корзину");
       return;
     }
@@ -634,6 +638,10 @@
     var sample = elements.sampleInput ? elements.sampleInput.value : "";
     var message = store.buildTelegramOrderMessage(cart, sample, settings);
     var tgUrl = store.buildTelegramUrl(settings.telegramDM, message);
+    trackEvent("checkout_start", {
+      items_count: cart.length,
+      total: store.getCartTotal()
+    });
 
     window.location.href = tgUrl;
   }
@@ -682,6 +690,12 @@
     toastTimer = setTimeout(function () {
       elements.toast.classList.remove("show", "error");
     }, 2200);
+  }
+
+  function trackEvent(name, params) {
+    if (window.VeligodskyAnalytics && typeof window.VeligodskyAnalytics.trackEvent === "function") {
+      window.VeligodskyAnalytics.trackEvent(name, params || {});
+    }
   }
 
   function escapeHtml(value) {
