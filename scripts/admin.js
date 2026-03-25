@@ -201,6 +201,15 @@
     try {
       await store.loginAdmin(inputPassword);
     } catch (error) {
+      if (String(error && error.message || "").indexOf("ADMIN_LOGIN_TEMP_BLOCKED:") === 0) {
+        var waitSeconds = Math.max(0, Math.round(Number(String(error.message).split(":")[1]) || 0));
+        if (waitSeconds > 0) {
+          showToast("Слишком много попыток входа. Подождите " + waitSeconds + " сек.", true);
+        } else {
+          showToast("Слишком много попыток входа. Попробуйте позже.", true);
+        }
+        return;
+      }
       if (String(error && error.message || "").indexOf("INVALID_CREDENTIALS") >= 0) {
         showToast("Неверный пароль.", true);
         return;
