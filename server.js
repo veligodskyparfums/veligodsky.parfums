@@ -51,6 +51,12 @@ const RATE_LIMIT_RULES = {
     max: 20,
     windowMs: 10 * 60 * 1000,
     message: "Too many password change attempts"
+  },
+  clientErrors: {
+    name: "client_errors",
+    max: 30,
+    windowMs: 60 * 1000,
+    message: "Too many client error reports"
   }
 };
 
@@ -132,6 +138,10 @@ function getRateLimitRule(pathname, method) {
 
   if (safePath === "/api/admin/password" && safeMethod === "POST") {
     return RATE_LIMIT_RULES.adminPassword;
+  }
+
+  if (safePath === "/api/client-errors" && safeMethod === "POST") {
+    return RATE_LIMIT_RULES.clientErrors;
   }
 
   if (safePath === "/api/store-data" && safeMethod === "PUT") {
@@ -855,6 +865,51 @@ async function handleAdminPasswordApi(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
+async function handleClientErrorsApi(req, res) {
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  let raw;
+  let parsed;
+
+  try {
+    raw = await readRequestBody(req);
+  } catch (error) {
+    if (error.message === "BODY_TOO_LARGE") {
+      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    parsed = JSON.parse(raw || "{}");
+  } catch (error) {
+    sendJson(res, 400, { error: "INVALID_JSON" });
+    return;
+  }
+
+  const clientIp = getClientIp(req);
+  const message = safeString(parsed && parsed.message).slice(0, 500);
+  const stack = safeString(parsed && parsed.stack).slice(0, 4000);
+  const type = safeString(parsed && parsed.type).slice(0, 120);
+  const url = safeString(parsed && parsed.url).slice(0, 500);
+  const timestamp = safeString(parsed && parsed.timestamp).slice(0, 64);
+
+  console.error("ClientError:", {
+    ip: clientIp,
+    type: type,
+    message: message,
+    url: url,
+    timestamp: timestamp,
+    stack: stack
+  });
+
+  sendJson(res, 202, { ok: true });
+}
+
 function getSafeFilePath(urlPathname) {
   let pathname = urlPathname;
 
@@ -940,6 +995,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/admin/password") {
       await handleAdminPasswordApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/client-errors") {
+      await handleClientErrorsApi(req, res);
       return;
     }
 
