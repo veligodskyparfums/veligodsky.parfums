@@ -16,6 +16,40 @@ const MAX_BODY_SIZE = 30 * 1024 * 1024;
 const ADMIN_SESSION_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.ADMIN_SESSION_TTL_MS || 24 * 60 * 60 * 1000));
 const MIN_ADMIN_PASSWORD_LENGTH = 6;
 const MAX_ADMIN_PASSWORD_LENGTH = 128;
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60 * 1000;
+
+const RATE_LIMIT_RULES = {
+  adminPanel: {
+    name: "admin_panel",
+    max: 120,
+    windowMs: 60 * 1000,
+    message: "Too many admin requests"
+  },
+  apiGeneral: {
+    name: "api_general",
+    max: 240,
+    windowMs: 60 * 1000,
+    message: "Too many API requests"
+  },
+  apiWrite: {
+    name: "api_write",
+    max: 60,
+    windowMs: 60 * 1000,
+    message: "Too many write requests"
+  },
+  adminAuth: {
+    name: "admin_auth",
+    max: 10,
+    windowMs: 10 * 60 * 1000,
+    message: "Too many login attempts"
+  },
+  adminPassword: {
+    name: "admin_password",
+    max: 20,
+    windowMs: 10 * 60 * 1000,
+    message: "Too many password change attempts"
+  }
+};
 
 const CONTENT_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -47,6 +81,8 @@ let storeRepository = null;
 let httpServer = null;
 let shuttingDown = false;
 const adminSessions = new Map();
+const rateLimitBuckets = new Map();
+let rateLimitLastCleanupAt = 0;
 
 function cloneData(data) {
   return JSON.parse(JSON.stringify(data));
@@ -67,6 +103,96 @@ function sendText(res, statusCode, text) {
     "Content-Type": "text/plain; charset=utf-8"
   });
   res.end(text);
+}
+
+function getClientIp(req) {
+  const forwardedFor = req.headers && req.headers["x-forwarded-for"];
+  if (typeof forwardedFor === "string" && forwardedFor.trim()) {
+    const firstIp = forwardedFor.split(",")[0];
+    return safeString(firstIp) || "unknown";
+  }
+  if (Array.isArray(forwardedFor) && forwardedFor.length) {
+    return safeString(forwardedFor[0]) || "unknown";
+  }
+  const remoteAddress = req.socket && req.socket.remoteAddress;
+  return safeString(remoteAddress) || "unknown";
+}
+
+function getRateLimitRule(pathname, method) {
+  const safePath = String(pathname || "");
+  const safeMethod = String(method || "").toUpperCase();
+
+  if (safePath === "/api/admin/auth" && safeMethod === "POST") {
+    return RATE_LIMIT_RULES.adminAuth;
+  }
+
+  if (safePath === "/api/admin/password" && safeMethod === "POST") {
+    return RATE_LIMIT_RULES.adminPassword;
+  }
+
+  if (safePath === "/api/store-data" && safeMethod === "PUT") {
+    return RATE_LIMIT_RULES.apiWrite;
+  }
+
+  if (safePath.startsWith("/api/")) {
+    return RATE_LIMIT_RULES.apiGeneral;
+  }
+
+  if (safePath === "/admin" || safePath.startsWith("/admin/")) {
+    return RATE_LIMIT_RULES.adminPanel;
+  }
+
+  return null;
+}
+
+function cleanupRateLimitBuckets(now) {
+  if (now - rateLimitLastCleanupAt < RATE_LIMIT_CLEANUP_INTERVAL_MS && rateLimitBuckets.size < 5000) {
+    return;
+  }
+
+  for (const [key, bucket] of rateLimitBuckets.entries()) {
+    if (!bucket || bucket.resetAt <= now) {
+      rateLimitBuckets.delete(key);
+    }
+  }
+
+  rateLimitLastCleanupAt = now;
+}
+
+function ensureRateLimit(req, res, pathname) {
+  const rule = getRateLimitRule(pathname, req.method);
+  if (!rule) {
+    return true;
+  }
+
+  const now = Date.now();
+  cleanupRateLimitBuckets(now);
+
+  const clientIp = getClientIp(req);
+  const key = rule.name + "|" + clientIp;
+  let bucket = rateLimitBuckets.get(key);
+
+  if (!bucket || bucket.resetAt <= now) {
+    bucket = {
+      count: 0,
+      resetAt: now + rule.windowMs
+    };
+    rateLimitBuckets.set(key, bucket);
+  }
+
+  if (bucket.count >= rule.max) {
+    const retryAfterSec = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+    res.setHeader("Retry-After", String(retryAfterSec));
+    sendJson(res, 429, {
+      error: "RATE_LIMIT_EXCEEDED",
+      message: rule.message,
+      retryAfterSec: retryAfterSec
+    });
+    return false;
+  }
+
+  bucket.count += 1;
+  return true;
 }
 
 function safeString(value) {
@@ -335,6 +461,18 @@ function isForceFileStorage() {
   return isTrueLike(process.env.FORCE_FILE_STORAGE);
 }
 
+function isProduction() {
+  const mode = String(process.env.NODE_ENV || "").trim().toLowerCase();
+  return mode === "production";
+}
+
+function isStrictDatabaseMode() {
+  if (isTrueLike(process.env.REQUIRE_DATABASE)) {
+    return true;
+  }
+  return isProduction() && !isForceFileStorage();
+}
+
 function getSslConfig() {
   const mode = String(process.env.DB_SSL || "").trim().toLowerCase();
   if (mode === "1" || mode === "true" || mode === "yes" || mode === "require") {
@@ -381,6 +519,8 @@ function loadPgPool() {
 }
 
 async function createStoreRepository() {
+  const strictDatabaseMode = isStrictDatabaseMode();
+
   if (isForceFileStorage()) {
     const repository = new FileStoreRepository(DATA_FILE);
     await repository.init();
@@ -398,7 +538,7 @@ async function createStoreRepository() {
       console.log("Storage mode: PostgreSQL");
       return repository;
     } catch (error) {
-      console.error("PostgreSQL init failed. Fallback to file storage. Reason:", error && error.message ? error.message : error);
+      console.error("PostgreSQL init failed. Reason:", error && error.message ? error.message : error);
       if (pool) {
         try {
           await pool.end();
@@ -406,7 +546,17 @@ async function createStoreRepository() {
           console.error("Failed to close PostgreSQL pool after init error:", closeError);
         }
       }
+
+      if (strictDatabaseMode) {
+        throw new Error("DATABASE_INIT_FAILED_IN_STRICT_MODE");
+      }
+
+      console.warn("Fallback to file storage is enabled in non-production mode.");
     }
+  }
+
+  if (strictDatabaseMode) {
+    throw new Error("DATABASE_CONFIG_REQUIRED_IN_STRICT_MODE");
   }
 
   const repository = new FileStoreRepository(DATA_FILE);
@@ -678,6 +828,10 @@ async function requestHandler(req, res) {
       || requestUrl.pathname === "/api/health"
     ) {
       handleHealthCheck(req, res);
+      return;
+    }
+
+    if (!ensureRateLimit(req, res, requestUrl.pathname)) {
       return;
     }
 
