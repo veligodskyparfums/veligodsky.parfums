@@ -408,6 +408,18 @@
       throw new Error("INVALID_CREDENTIALS");
     }
 
+    if (response.status === 429) {
+      clearStoredAdminToken();
+      var retryAfterSec = 0;
+      try {
+        var errorPayload = await response.json();
+        retryAfterSec = Math.max(0, Math.round(Number(errorPayload && errorPayload.retryAfterSec) || 0));
+      } catch (error) {
+        retryAfterSec = Math.max(0, Math.round(Number(response.headers.get("Retry-After")) || 0));
+      }
+      throw new Error("ADMIN_LOGIN_TEMP_BLOCKED:" + retryAfterSec);
+    }
+
     if (!response.ok) {
       throw new Error("HTTP " + response.status);
     }
