@@ -16,6 +16,9 @@ const MAX_BODY_SIZE = 30 * 1024 * 1024;
 const ADMIN_SESSION_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.ADMIN_SESSION_TTL_MS || 24 * 60 * 60 * 1000));
 const MIN_ADMIN_PASSWORD_LENGTH = 6;
 const MAX_ADMIN_PASSWORD_LENGTH = 128;
+const ADMIN_BRUTE_FORCE_MAX_ATTEMPTS = Math.max(1, Number(process.env.ADMIN_BRUTE_FORCE_MAX_ATTEMPTS || 5));
+const ADMIN_BRUTE_FORCE_WINDOW_MS = Math.max(60 * 1000, Number(process.env.ADMIN_BRUTE_FORCE_WINDOW_MS || 15 * 60 * 1000));
+const ADMIN_BRUTE_FORCE_BLOCK_MS = Math.max(60 * 1000, Number(process.env.ADMIN_BRUTE_FORCE_BLOCK_MS || 15 * 60 * 1000));
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60 * 1000;
 
 const RATE_LIMIT_RULES = {
@@ -83,6 +86,7 @@ let shuttingDown = false;
 const adminSessions = new Map();
 const rateLimitBuckets = new Map();
 let rateLimitLastCleanupAt = 0;
+const adminLoginFailures = new Map();
 
 function cloneData(data) {
   return JSON.parse(JSON.stringify(data));
@@ -193,6 +197,74 @@ function ensureRateLimit(req, res, pathname) {
 
   bucket.count += 1;
   return true;
+}
+
+function cleanupAdminLoginFailures(now) {
+  for (const [ip, state] of adminLoginFailures.entries()) {
+    if (!state) {
+      adminLoginFailures.delete(ip);
+      continue;
+    }
+
+    const hasActiveBan = state.blockedUntil > now;
+    const isWindowExpired = !hasActiveBan && state.windowStartedAt + ADMIN_BRUTE_FORCE_WINDOW_MS <= now;
+    if (isWindowExpired) {
+      adminLoginFailures.delete(ip);
+    }
+  }
+}
+
+function getAdminLoginBanState(clientIp) {
+  const now = Date.now();
+  cleanupAdminLoginFailures(now);
+
+  const state = adminLoginFailures.get(clientIp);
+  if (!state) {
+    return { blocked: false, retryAfterSec: 0 };
+  }
+
+  if (state.blockedUntil > now) {
+    return {
+      blocked: true,
+      retryAfterSec: Math.max(1, Math.ceil((state.blockedUntil - now) / 1000))
+    };
+  }
+
+  return { blocked: false, retryAfterSec: 0 };
+}
+
+function registerFailedAdminLogin(clientIp) {
+  const now = Date.now();
+  cleanupAdminLoginFailures(now);
+
+  let state = adminLoginFailures.get(clientIp);
+  if (!state || state.windowStartedAt + ADMIN_BRUTE_FORCE_WINDOW_MS <= now) {
+    state = {
+      attempts: 0,
+      windowStartedAt: now,
+      blockedUntil: 0
+    };
+  }
+
+  state.attempts += 1;
+
+  if (state.attempts >= ADMIN_BRUTE_FORCE_MAX_ATTEMPTS) {
+    state.blockedUntil = now + ADMIN_BRUTE_FORCE_BLOCK_MS;
+  }
+
+  adminLoginFailures.set(clientIp, state);
+
+  return {
+    attempts: state.attempts,
+    blocked: state.blockedUntil > now,
+    retryAfterSec: state.blockedUntil > now
+      ? Math.max(1, Math.ceil((state.blockedUntil - now) / 1000))
+      : 0
+  };
+}
+
+function clearFailedAdminLogins(clientIp) {
+  adminLoginFailures.delete(clientIp);
 }
 
 function safeString(value) {
@@ -628,12 +700,7 @@ async function handleStoreApi(req, res) {
     try {
       const currentData = await storeRepository.read();
       const nextPayload = ensureIncomingAdminPassword(parsed, currentData);
-      const passwordWasChanged = readAdminPassword(nextPayload) !== readAdminPassword(currentData);
       const saved = await storeRepository.write(nextPayload);
-
-      if (passwordWasChanged) {
-        revokeAdminSessions(getBearerToken(req));
-      }
 
       sendJson(res, 200, sanitizePublicStoreData(saved));
     } catch (error) {
@@ -658,6 +725,18 @@ async function handleAdminAuthApi(req, res) {
 
   if (req.method !== "POST") {
     sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  const clientIp = getClientIp(req);
+  const banState = getAdminLoginBanState(clientIp);
+  if (banState.blocked) {
+    res.setHeader("Retry-After", String(banState.retryAfterSec));
+    sendJson(res, 429, {
+      error: "ADMIN_LOGIN_TEMP_BLOCKED",
+      message: "Too many failed login attempts",
+      retryAfterSec: banState.retryAfterSec
+    });
     return;
   }
 
@@ -690,10 +769,24 @@ async function handleAdminAuthApi(req, res) {
   const currentData = await storeRepository.read();
   const currentPassword = readAdminPassword(currentData);
   if (!safeCompareStrings(password, currentPassword)) {
-    sendJson(res, 401, { error: "INVALID_CREDENTIALS" });
+    const failedState = registerFailedAdminLogin(clientIp);
+    if (failedState.blocked) {
+      res.setHeader("Retry-After", String(failedState.retryAfterSec));
+      sendJson(res, 429, {
+        error: "ADMIN_LOGIN_TEMP_BLOCKED",
+        message: "Too many failed login attempts",
+        retryAfterSec: failedState.retryAfterSec
+      });
+      return;
+    }
+    sendJson(res, 401, {
+      error: "INVALID_CREDENTIALS",
+      attemptsLeft: Math.max(0, ADMIN_BRUTE_FORCE_MAX_ATTEMPTS - failedState.attempts)
+    });
     return;
   }
 
+  clearFailedAdminLogins(clientIp);
   const session = createAdminSession();
   sendJson(res, 200, {
     ok: true,
