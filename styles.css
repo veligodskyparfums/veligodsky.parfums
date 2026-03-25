@@ -593,6 +593,45 @@ body.menu-open .nav {
   font-size: 0.78rem;
 }
 
+.legal-main {
+  min-height: 70vh;
+  padding: 42px 0 56px;
+}
+
+.legal-card {
+  display: grid;
+  gap: 16px;
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-lg);
+  padding: clamp(18px, 4vw, 34px);
+}
+
+.legal-card h1 {
+  font-size: clamp(1.8rem, 4.5vw, 2.8rem);
+}
+
+.legal-card h2 {
+  margin-top: 10px;
+  font-size: clamp(1.35rem, 3.4vw, 2rem);
+}
+
+.legal-card p,
+.legal-card li {
+  color: var(--muted);
+}
+
+.legal-card ul {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.legal-card .muted-note {
+  font-size: 0.92rem;
+}
+
 .cart-sidebar {
   position: fixed;
   top: 0;
