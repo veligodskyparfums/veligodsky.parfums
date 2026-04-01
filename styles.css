@@ -541,6 +541,47 @@ body.menu-open .nav {
   min-width: 100%;
 }
 
+.reviews-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.review-card {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+  transition: transform 0.25s ease, border-color 0.25s ease;
+}
+
+.review-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-head strong {
+  font-size: 1rem;
+}
+
+.review-head span {
+  color: #f6d27a;
+  letter-spacing: 0.12em;
+  font-size: 0.84rem;
+}
+
+.review-card p {
+  color: var(--accent-muted);
+}
 .about-card,
 .consult-banner {
   background: linear-gradient(150deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
@@ -1053,6 +1094,10 @@ body.menu-open .nav {
     grid-template-columns: repeat(2, 1fr);
   }
 
+  .reviews-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1092,6 +1137,10 @@ body.menu-open .nav {
 
   .advantage-grid {
     grid-template-columns: repeat(4, 1fr);
+  }
+
+  .reviews-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .filters {
