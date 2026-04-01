@@ -3,7 +3,7 @@
 
   window.VeligodskySiteConfig = Object.assign({
     siteUrl: "https://veligodskyparfums.ru",
-    yandexMetrikaId: "",
+    yandexMetrikaId:108260239,
     googleAnalyticsId: "",
     enableClientErrorReporting: true,
     clientErrorEndpoint: "/api/client-errors"
