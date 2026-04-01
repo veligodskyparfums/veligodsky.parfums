@@ -19,7 +19,8 @@
   var state = {
     editingId: null,
     imageData: "",
-    draftMemory: null
+    draftMemory: null,
+    homepageReviewEditingId: null
   };
 
   var elements = {};
@@ -71,6 +72,15 @@
     elements.cancelEditBtn = document.getElementById("cancelEditBtn");
 
     elements.adminProductsList = document.getElementById("adminProductsList");
+    elements.homepageReviewForm = document.getElementById("homepageReviewForm");
+    elements.homepageReviewsEditorTitle = document.getElementById("homepageReviewsEditorTitle");
+    elements.homepageReviewIdInput = document.getElementById("homepageReviewIdInput");
+    elements.homepageReviewAuthorInput = document.getElementById("homepageReviewAuthorInput");
+    elements.homepageReviewCityInput = document.getElementById("homepageReviewCityInput");
+    elements.homepageReviewRatingInput = document.getElementById("homepageReviewRatingInput");
+    elements.homepageReviewTextInput = document.getElementById("homepageReviewTextInput");
+    elements.homepageReviewResetBtn = document.getElementById("homepageReviewResetBtn");
+    elements.adminHomepageReviewsList = document.getElementById("adminHomepageReviewsList");
     elements.toast = document.getElementById("adminToast");
   }
 
@@ -111,6 +121,16 @@
     elements.adminProductsList.addEventListener("change", onProductListChange);
     elements.volumesContainer.addEventListener("input", saveEditorDraftFromForm);
     elements.volumesContainer.addEventListener("change", saveEditorDraftFromForm);
+
+    if (elements.homepageReviewForm) {
+      elements.homepageReviewForm.addEventListener("submit", saveHomepageReview);
+    }
+    if (elements.homepageReviewResetBtn) {
+      elements.homepageReviewResetBtn.addEventListener("click", resetHomepageReviewEditor);
+    }
+    if (elements.adminHomepageReviewsList) {
+      elements.adminHomepageReviewsList.addEventListener("click", onHomepageReviewsListClick);
+    }
 
     window.addEventListener("focus", function () {
       if (isAuthenticated()) {
@@ -161,6 +181,10 @@
   function refreshPanel() {
     fillSettingsForm();
     renderProducts();
+    renderHomepageReviews();
+    if (!state.homepageReviewEditingId) {
+      resetHomepageReviewEditor();
+    }
     if (!restoreEditorFromDraft()) {
       resetEditor({ keepDraft: true });
     }
@@ -742,6 +766,7 @@
       description: description,
       image: image,
       volumes: volumes,
+      reviews: existing && Array.isArray(existing.reviews) ? existing.reviews : [],
       topWeek: elements.topWeekInput.checked,
       topMonth: elements.topMonthInput.checked
     };
@@ -944,6 +969,217 @@
         + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"week\" data-id=\"" + escapeHtml(product.id) + "\" " + (product.topWeek ? "checked" : "") + ">Топ недели</label>"
         + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"month\" data-id=\"" + escapeHtml(product.id) + "\" " + (product.topMonth ? "checked" : "") + ">Топ месяца</label>"
         + "    </div>"
+        + "  </div>"
+        + "</article>";
+    }).join("");
+  }
+
+  function buildStars(value) {
+    var safeRating = Math.max(1, Math.min(5, Math.round(Number(value) || 5)));
+    return "★".repeat(safeRating) + "☆".repeat(5 - safeRating);
+  }
+
+  function formatReviewDate(value) {
+    var parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return "";
+    }
+    return parsed.toLocaleDateString("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
+  }
+
+  function resetHomepageReviewEditor() {
+    state.homepageReviewEditingId = null;
+    if (!elements.homepageReviewForm) {
+      return;
+    }
+
+    elements.homepageReviewForm.reset();
+    elements.homepageReviewIdInput.value = "";
+    if (elements.homepageReviewRatingInput) {
+      elements.homepageReviewRatingInput.value = "5";
+    }
+    if (elements.homepageReviewsEditorTitle) {
+      elements.homepageReviewsEditorTitle.textContent = "Добавить отзыв на главную";
+    }
+  }
+
+  function startEditHomepageReview(reviewId) {
+    if (typeof store.getHomepageReviews !== "function") {
+      showToast("Обновите scripts/common.js, чтобы редактировать отзывы.", true);
+      return;
+    }
+
+    var reviews = store.getHomepageReviews();
+    var target = reviews.find(function (review) {
+      return String(review && review.id) === String(reviewId);
+    });
+    if (!target) {
+      return;
+    }
+
+    state.homepageReviewEditingId = String(target.id);
+    elements.homepageReviewIdInput.value = String(target.id);
+    elements.homepageReviewAuthorInput.value = String(target.author || "");
+    elements.homepageReviewCityInput.value = String(target.city || "");
+    elements.homepageReviewRatingInput.value = String(Math.max(1, Math.min(5, Math.round(Number(target.rating) || 5))));
+    elements.homepageReviewTextInput.value = String(target.text || "");
+    if (elements.homepageReviewsEditorTitle) {
+      elements.homepageReviewsEditorTitle.textContent = "Редактировать отзыв на главной";
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function saveHomepageReview(event) {
+    event.preventDefault();
+
+    if (typeof store.getHomepageReviews !== "function" || typeof store.saveHomepageReviews !== "function") {
+      showToast("Обновите scripts/common.js, чтобы сохранить отзывы.", true);
+      return;
+    }
+
+    var reviewId = String(elements.homepageReviewIdInput.value || "").trim();
+    var author = String(elements.homepageReviewAuthorInput.value || "").trim();
+    var city = String(elements.homepageReviewCityInput.value || "").trim();
+    var text = String(elements.homepageReviewTextInput.value || "").trim();
+    var rating = Math.max(1, Math.min(5, Math.round(Number(elements.homepageReviewRatingInput.value) || 5)));
+
+    if (!author || author.length < 2) {
+      showToast("Укажите имя автора отзыва.", true);
+      return;
+    }
+
+    if (!text || text.length < 6) {
+      showToast("Текст отзыва должен быть не короче 6 символов.", true);
+      return;
+    }
+
+    var reviews = store.getHomepageReviews();
+    var nowIso = new Date().toISOString();
+    var payload = {
+      id: reviewId || store.uid("hr"),
+      author: author,
+      city: city,
+      text: text,
+      rating: rating,
+      createdAt: nowIso
+    };
+
+    if (reviewId) {
+      var existing = reviews.find(function (item) {
+        return String(item.id) === reviewId;
+      });
+      if (existing && existing.createdAt) {
+        payload.createdAt = existing.createdAt;
+      }
+      reviews = reviews.map(function (item) {
+        return String(item.id) === reviewId ? payload : item;
+      });
+    } else {
+      reviews.unshift(payload);
+    }
+
+    try {
+      await store.saveHomepageReviews(reviews);
+      renderHomepageReviews();
+      resetHomepageReviewEditor();
+      showToast(reviewId ? "Отзыв на главной обновлён." : "Отзыв на главной добавлен.");
+    } catch (error) {
+      showToast("Не удалось сохранить отзыв на сервере.", true);
+    }
+  }
+
+  async function deleteHomepageReview(reviewId) {
+    if (typeof store.getHomepageReviews !== "function" || typeof store.saveHomepageReviews !== "function") {
+      showToast("Обновите scripts/common.js, чтобы удалять отзывы.", true);
+      return;
+    }
+
+    var reviews = store.getHomepageReviews();
+    var target = reviews.find(function (item) {
+      return String(item.id) === String(reviewId);
+    });
+    if (!target) {
+      return;
+    }
+
+    var ok = window.confirm("Удалить отзыв \"" + target.author + "\"?");
+    if (!ok) {
+      return;
+    }
+
+    var next = reviews.filter(function (item) {
+      return String(item.id) !== String(reviewId);
+    });
+
+    try {
+      await store.saveHomepageReviews(next);
+      if (state.homepageReviewEditingId === String(reviewId)) {
+        resetHomepageReviewEditor();
+      }
+      renderHomepageReviews();
+      showToast("Отзыв удалён.");
+    } catch (error) {
+      showToast("Не удалось удалить отзыв на сервере.", true);
+    }
+  }
+
+  function onHomepageReviewsListClick(event) {
+    var button = event.target.closest("[data-review-action]");
+    if (!button) {
+      return;
+    }
+
+    var action = String(button.dataset.reviewAction || "");
+    var reviewId = String(button.dataset.id || "");
+    if (!reviewId) {
+      return;
+    }
+
+    if (action === "edit") {
+      startEditHomepageReview(reviewId);
+      return;
+    }
+
+    if (action === "delete") {
+      deleteHomepageReview(reviewId);
+    }
+  }
+
+  function renderHomepageReviews() {
+    if (!elements.adminHomepageReviewsList) {
+      return;
+    }
+
+    if (typeof store.getHomepageReviews !== "function") {
+      elements.adminHomepageReviewsList.innerHTML = "<div class=\"empty-state\">Обновите scripts/common.js, чтобы управлять отзывами.</div>";
+      return;
+    }
+
+    var reviews = store.getHomepageReviews();
+    if (!reviews.length) {
+      elements.adminHomepageReviewsList.innerHTML = "<div class=\"empty-state\">Пока отзывов на главной нет.</div>";
+      return;
+    }
+
+    elements.adminHomepageReviewsList.innerHTML = reviews.map(function (review) {
+      var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
+      return ""
+        + "<article class=\"admin-review-card\">"
+        + "  <div class=\"admin-review-head\">"
+        + "    <div>"
+        + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
+        + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
+        + "    </div>"
+        + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
+        + "  </div>"
+        + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
+        + "  <div class=\"admin-review-actions\">"
+        + "    <button class=\"btn btn-ghost\" type=\"button\" data-review-action=\"edit\" data-id=\"" + escapeHtml(review.id) + "\">Редактировать</button>"
+        + "    <button class=\"btn btn-ghost\" type=\"button\" data-review-action=\"delete\" data-id=\"" + escapeHtml(review.id) + "\">Удалить</button>"
         + "  </div>"
         + "</article>";
     }).join("");

@@ -7,6 +7,7 @@
   var API_DATA_URL = "/api/store-data";
   var API_ADMIN_AUTH_URL = "/api/admin/auth";
   var API_ADMIN_PASSWORD_URL = "/api/admin/password";
+  var API_PRODUCT_REVIEWS_URL = "/api/product-reviews";
   var ADMIN_TOKEN_KEY = "veligodsky_admin_token_v1";
   var numberFormatter = new Intl.NumberFormat("ru-RU");
   var dataCache = null;
@@ -28,6 +29,33 @@
     storeName: "VELIGODSKY.PARFUMS",
     backupNoticeEnabled: true
   };
+
+  var defaultHomepageReviews = [
+    {
+      id: "hr_001",
+      author: "Анна",
+      city: "Москва",
+      text: "Очень приятный сервис: помогли подобрать аромат под запрос и быстро отправили заказ.",
+      rating: 5,
+      createdAt: "2026-03-20T12:00:00.000Z"
+    },
+    {
+      id: "hr_002",
+      author: "Денис",
+      city: "Санкт-Петербург",
+      text: "Брал в подарок, все пришло в срок. Упаковка аккуратная, аромат оригинальный.",
+      rating: 5,
+      createdAt: "2026-03-21T15:30:00.000Z"
+    },
+    {
+      id: "hr_003",
+      author: "Екатерина",
+      city: "Казань",
+      text: "Понравилось, что можно получить консультацию в Telegram и выбрать пробник к заказу.",
+      rating: 5,
+      createdAt: "2026-03-22T09:15:00.000Z"
+    }
+  ];
 
   var defaultProducts = [
     {
@@ -231,6 +259,72 @@
     };
   }
 
+  function normalizeReview(review, options) {
+    if (!review || typeof review !== "object") {
+      return null;
+    }
+
+    var safeOptions = options || {};
+    var author = String(review.author || review.name || "").trim();
+    var text = String(review.text || review.message || "").trim();
+    if (!author || !text) {
+      return null;
+    }
+
+    var city = String(review.city || "").trim();
+    var rating = Math.round(toNumber(review.rating, 5));
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      rating = 5;
+    }
+
+    var createdAt = String(review.createdAt || "").trim();
+    if (createdAt) {
+      var parsedCreatedAt = new Date(createdAt);
+      if (!Number.isNaN(parsedCreatedAt.getTime())) {
+        createdAt = parsedCreatedAt.toISOString();
+      } else {
+        createdAt = "";
+      }
+    }
+    if (!createdAt) {
+      createdAt = new Date().toISOString();
+    }
+
+    var maxTextLength = Math.max(80, Math.round(toNumber(safeOptions.maxTextLength, 500)));
+
+    return {
+      id: String(review.id || uid(safeOptions.prefix || "r")),
+      author: author.slice(0, 80),
+      city: city.slice(0, 80),
+      text: text.slice(0, maxTextLength),
+      rating: rating,
+      createdAt: createdAt
+    };
+  }
+
+  function normalizeReviewList(reviews, options) {
+    var safeOptions = options || {};
+    var source = Array.isArray(reviews) ? reviews : [];
+    var normalized = source.map(function (review) {
+      return normalizeReview(review, safeOptions);
+    }).filter(Boolean);
+
+    if (safeOptions.sortByCreatedAtDesc) {
+      normalized.sort(function (left, right) {
+        var leftTime = new Date(left.createdAt).getTime();
+        var rightTime = new Date(right.createdAt).getTime();
+        return rightTime - leftTime;
+      });
+    }
+
+    var maxItems = Number(safeOptions.maxItems);
+    if (Number.isFinite(maxItems) && maxItems > 0 && normalized.length > maxItems) {
+      normalized = normalized.slice(0, Math.round(maxItems));
+    }
+
+    return normalized;
+  }
+
   function normalizeProduct(product, idx) {
     if (!product || typeof product !== "object") {
       return null;
@@ -263,6 +357,12 @@
       description: String(product.description || "").trim(),
       image: pickImage(product.image, idx),
       volumes: normalizedVolumes,
+      reviews: normalizeReviewList(product.reviews, {
+        prefix: "pr",
+        maxItems: 80,
+        maxTextLength: 500,
+        sortByCreatedAtDesc: true
+      }),
       topWeek: Boolean(product.topWeek),
       topMonth: Boolean(product.topMonth)
     };
@@ -271,6 +371,12 @@
   function getDefaultData() {
     return {
       settings: Object.assign({}, defaultSettings),
+      reviews: normalizeReviewList(defaultHomepageReviews, {
+        prefix: "hr",
+        maxItems: 30,
+        maxTextLength: 500,
+        sortByCreatedAtDesc: true
+      }),
       products: defaultProducts.map(function (product, idx) {
         return normalizeProduct(product, idx);
       }).filter(Boolean)
@@ -294,9 +400,19 @@
       ? safe.products.map(normalizeProduct).filter(Boolean)
       : defaults.products;
 
+    var reviews = Array.isArray(safe.reviews)
+      ? normalizeReviewList(safe.reviews, {
+        prefix: "hr",
+        maxItems: 30,
+        maxTextLength: 500,
+        sortByCreatedAtDesc: true
+      })
+      : defaults.reviews;
+
     return {
       settings: settings,
-      products: products
+      products: products,
+      reviews: reviews
     };
   }
 
@@ -576,6 +692,112 @@
     return saved.products;
   }
 
+  function getHomepageReviews() {
+    var data = loadData();
+    return Array.isArray(data.reviews) ? data.reviews : [];
+  }
+
+  async function saveHomepageReviews(reviews) {
+    var data = loadData();
+    data.reviews = normalizeReviewList(reviews, {
+      prefix: "hr",
+      maxItems: 30,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+    var saved = await commitData(data);
+    return Array.isArray(saved.reviews) ? saved.reviews : [];
+  }
+
+  function applyProductReviewsCache(productId, reviews) {
+    var safeProductId = String(productId || "").trim();
+    if (!safeProductId) {
+      return [];
+    }
+
+    var nextReviews = normalizeReviewList(reviews, {
+      prefix: "pr",
+      maxItems: 80,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+
+    var data = loadData();
+    data.products = data.products.map(function (product) {
+      if (String(product.id) !== safeProductId) {
+        return product;
+      }
+      return Object.assign({}, product, {
+        reviews: nextReviews
+      });
+    });
+    saveData(data);
+    return nextReviews;
+  }
+
+  async function submitProductReview(productId, reviewPayload) {
+    var safeProductId = String(productId || "").trim();
+    if (!safeProductId) {
+      throw new Error("PRODUCT_ID_REQUIRED");
+    }
+
+    if (!canUseRemoteStore()) {
+      throw new Error("REMOTE_STORE_REQUIRED");
+    }
+
+    var payload = {
+      productId: safeProductId,
+      author: String(reviewPayload && reviewPayload.author || "").trim(),
+      city: String(reviewPayload && reviewPayload.city || "").trim(),
+      text: String(reviewPayload && reviewPayload.text || "").trim(),
+      rating: Math.max(1, Math.min(5, Math.round(toNumber(reviewPayload && reviewPayload.rating, 5))))
+    };
+
+    var response = await fetch(API_PRODUCT_REVIEWS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.status === 429) {
+      var retryAfter = Math.max(0, Math.round(Number(response.headers.get("Retry-After")) || 0));
+      throw new Error("REVIEW_RATE_LIMIT:" + retryAfter);
+    }
+
+    if (response.status === 404) {
+      throw new Error("PRODUCT_NOT_FOUND");
+    }
+
+    if (response.status === 400) {
+      var validationPayload = null;
+      try {
+        validationPayload = await response.json();
+      } catch (error) {
+        validationPayload = null;
+      }
+      var validationCode = String(validationPayload && validationPayload.error || "INVALID_REVIEW_PAYLOAD");
+      throw new Error("INVALID_REVIEW_PAYLOAD:" + validationCode);
+    }
+
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var result = await response.json();
+    var nextReviews = normalizeReviewList(result && result.reviews, {
+      prefix: "pr",
+      maxItems: 80,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+
+    applyProductReviewsCache(safeProductId, nextReviews);
+    return nextReviews;
+  }
+
   function getSettings() {
     return loadData().settings;
   }
@@ -826,6 +1048,7 @@
     API_DATA_URL: API_DATA_URL,
     API_ADMIN_AUTH_URL: API_ADMIN_AUTH_URL,
     API_ADMIN_PASSWORD_URL: API_ADMIN_PASSWORD_URL,
+    API_PRODUCT_REVIEWS_URL: API_PRODUCT_REVIEWS_URL,
     init: init,
     syncFromServer: syncFromServer,
     loginAdmin: loginAdmin,
@@ -838,6 +1061,9 @@
     saveData: saveData,
     getProducts: getProducts,
     saveProducts: saveProducts,
+    getHomepageReviews: getHomepageReviews,
+    saveHomepageReviews: saveHomepageReviews,
+    submitProductReview: submitProductReview,
     getSettings: getSettings,
     updateSettings: updateSettings,
     getCart: getCart,

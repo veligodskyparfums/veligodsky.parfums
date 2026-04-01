@@ -135,6 +135,48 @@
         <h2>Каталог</h2>
         <div id="adminProductsList" class="admin-products"></div>
       </section>
+
+      <section class="admin-section">
+        <h2 id="homepageReviewsEditorTitle">Добавить отзыв на главную</h2>
+        <form id="homepageReviewForm" class="admin-form">
+          <input type="hidden" id="homepageReviewIdInput">
+
+          <div class="admin-grid">
+            <label class="field">
+              <span>Имя</span>
+              <input type="text" id="homepageReviewAuthorInput" maxlength="80" required>
+            </label>
+
+            <label class="field">
+              <span>Город</span>
+              <input type="text" id="homepageReviewCityInput" maxlength="80" placeholder="Необязательно">
+            </label>
+
+            <label class="field">
+              <span>Оценка</span>
+              <select id="homepageReviewRatingInput" required>
+                <option value="5">5</option>
+                <option value="4">4</option>
+                <option value="3">3</option>
+                <option value="2">2</option>
+                <option value="1">1</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Текст отзыва</span>
+            <textarea id="homepageReviewTextInput" rows="4" maxlength="500" required></textarea>
+          </label>
+
+          <div class="editor-actions">
+            <button class="btn btn-primary" type="submit">Сохранить отзыв</button>
+            <button class="btn btn-ghost" type="button" id="homepageReviewResetBtn">Очистить форму</button>
+          </div>
+        </form>
+
+        <div id="adminHomepageReviewsList" class="admin-reviews"></div>
+      </section>
     </section>
   </main>
 

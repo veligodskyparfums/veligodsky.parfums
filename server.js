@@ -20,6 +20,10 @@ const ADMIN_BRUTE_FORCE_MAX_ATTEMPTS = Math.max(1, Number(process.env.ADMIN_BRUT
 const ADMIN_BRUTE_FORCE_WINDOW_MS = Math.max(60 * 1000, Number(process.env.ADMIN_BRUTE_FORCE_WINDOW_MS || 15 * 60 * 1000));
 const ADMIN_BRUTE_FORCE_BLOCK_MS = Math.max(60 * 1000, Number(process.env.ADMIN_BRUTE_FORCE_BLOCK_MS || 15 * 60 * 1000));
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60 * 1000;
+const MAX_REVIEW_AUTHOR_LENGTH = 80;
+const MAX_REVIEW_CITY_LENGTH = 80;
+const MAX_REVIEW_TEXT_LENGTH = 500;
+const MAX_PRODUCT_REVIEWS_PER_PRODUCT = 80;
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -57,6 +61,12 @@ const RATE_LIMIT_RULES = {
     max: 30,
     windowMs: 60 * 1000,
     message: "Too many client error reports"
+  },
+  productReviews: {
+    name: "product_reviews",
+    max: 20,
+    windowMs: 60 * 1000,
+    message: "Too many review submissions"
   }
 };
 
@@ -142,6 +152,10 @@ function getRateLimitRule(pathname, method) {
 
   if (safePath === "/api/client-errors" && safeMethod === "POST") {
     return RATE_LIMIT_RULES.clientErrors;
+  }
+
+  if (safePath === "/api/product-reviews" && safeMethod === "POST") {
+    return RATE_LIMIT_RULES.productReviews;
   }
 
   if (safePath === "/api/store-data" && safeMethod === "PUT") {
@@ -281,6 +295,104 @@ function safeString(value) {
   return String(value || "").trim();
 }
 
+function clampInteger(value, min, max, fallback) {
+  const safeFallback = Number.isFinite(fallback) ? fallback : min;
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed)) {
+    return safeFallback;
+  }
+  if (parsed < min) {
+    return min;
+  }
+  if (parsed > max) {
+    return max;
+  }
+  return parsed;
+}
+
+function normalizeIsoDate(value) {
+  const safe = safeString(value);
+  if (!safe) {
+    return new Date().toISOString();
+  }
+  const parsed = new Date(safe);
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date().toISOString();
+  }
+  return parsed.toISOString();
+}
+
+function normalizeStoredReview(raw, prefix) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const author = safeString(raw.author || raw.name).slice(0, MAX_REVIEW_AUTHOR_LENGTH);
+  const text = safeString(raw.text || raw.message).slice(0, MAX_REVIEW_TEXT_LENGTH);
+  if (!author || !text) {
+    return null;
+  }
+
+  const city = safeString(raw.city).slice(0, MAX_REVIEW_CITY_LENGTH);
+  const rating = clampInteger(raw.rating, 1, 5, 5);
+  const idPrefix = safeString(prefix) || "r";
+
+  return {
+    id: safeString(raw.id) || (idPrefix + "_" + crypto.randomBytes(6).toString("hex")),
+    author,
+    city,
+    text,
+    rating,
+    createdAt: normalizeIsoDate(raw.createdAt)
+  };
+}
+
+function normalizeStoredReviewList(rawReviews, prefix, maxItems) {
+  const source = Array.isArray(rawReviews) ? rawReviews : [];
+  const normalized = source
+    .map((entry) => normalizeStoredReview(entry, prefix))
+    .filter(Boolean)
+    .sort((left, right) => {
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+    });
+
+  if (Number.isFinite(maxItems) && maxItems > 0) {
+    return normalized.slice(0, maxItems);
+  }
+
+  return normalized;
+}
+
+function parseIncomingProductReview(payload) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("INVALID_REVIEW_PAYLOAD");
+  }
+
+  const productId = safeString(payload.productId).slice(0, 120);
+  const author = safeString(payload.author).slice(0, MAX_REVIEW_AUTHOR_LENGTH);
+  const city = safeString(payload.city).slice(0, MAX_REVIEW_CITY_LENGTH);
+  const text = safeString(payload.text).slice(0, MAX_REVIEW_TEXT_LENGTH);
+  const rating = clampInteger(payload.rating, 1, 5, 5);
+
+  if (!productId) {
+    throw new Error("PRODUCT_ID_REQUIRED");
+  }
+  if (!author || author.length < 2) {
+    throw new Error("AUTHOR_REQUIRED");
+  }
+  if (!text || text.length < 6) {
+    throw new Error("REVIEW_TEXT_REQUIRED");
+  }
+
+  return {
+    productId,
+    author,
+    city,
+    text,
+    rating
+  };
+}
+
 function readAdminPassword(data) {
   const fromData = safeString(data && data.settings && data.settings.adminPassword);
   if (fromData) {
@@ -411,6 +523,19 @@ function validateStoreData(payload) {
 
   if (!Array.isArray(payload.products)) {
     throw new Error("INVALID_PAYLOAD");
+  }
+
+  if (payload.reviews !== undefined && !Array.isArray(payload.reviews)) {
+    throw new Error("INVALID_PAYLOAD");
+  }
+
+  for (const product of payload.products) {
+    if (!product || typeof product !== "object") {
+      throw new Error("INVALID_PAYLOAD");
+    }
+    if (product.reviews !== undefined && !Array.isArray(product.reviews)) {
+      throw new Error("INVALID_PAYLOAD");
+    }
   }
 
   return payload;
@@ -865,6 +990,99 @@ async function handleAdminPasswordApi(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
+async function handleProductReviewsApi(req, res) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  let raw;
+  let parsed;
+
+  try {
+    raw = await readRequestBody(req);
+  } catch (error) {
+    if (error.message === "BODY_TOO_LARGE") {
+      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    parsed = JSON.parse(raw || "{}");
+  } catch (error) {
+    sendJson(res, 400, { error: "INVALID_JSON" });
+    return;
+  }
+
+  let incomingReview;
+  try {
+    incomingReview = parseIncomingProductReview(parsed);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message || "INVALID_REVIEW_PAYLOAD" });
+    return;
+  }
+
+  const currentData = await storeRepository.read();
+  const nextData = cloneData(validateStoreData(currentData));
+
+  const productIndex = nextData.products.findIndex((product) => {
+    return safeString(product && product.id) === incomingReview.productId;
+  });
+
+  if (productIndex < 0) {
+    sendJson(res, 404, { error: "PRODUCT_NOT_FOUND" });
+    return;
+  }
+
+  const targetProduct = Object.assign({}, nextData.products[productIndex]);
+  const reviews = normalizeStoredReviewList(
+    targetProduct.reviews,
+    "pr",
+    MAX_PRODUCT_REVIEWS_PER_PRODUCT
+  );
+
+  const newReview = normalizeStoredReview({
+    id: "pr_" + crypto.randomBytes(6).toString("hex"),
+    author: incomingReview.author,
+    city: incomingReview.city,
+    text: incomingReview.text,
+    rating: incomingReview.rating,
+    createdAt: new Date().toISOString()
+  }, "pr");
+
+  reviews.unshift(newReview);
+  targetProduct.reviews = normalizeStoredReviewList(
+    reviews,
+    "pr",
+    MAX_PRODUCT_REVIEWS_PER_PRODUCT
+  );
+  nextData.products[productIndex] = targetProduct;
+
+  const saved = await storeRepository.write(nextData);
+  const savedProduct = saved.products.find((product) => {
+    return safeString(product && product.id) === incomingReview.productId;
+  });
+  const savedReviews = normalizeStoredReviewList(
+    savedProduct && savedProduct.reviews,
+    "pr",
+    MAX_PRODUCT_REVIEWS_PER_PRODUCT
+  );
+
+  sendJson(res, 201, {
+    ok: true,
+    productId: incomingReview.productId,
+    review: savedReviews[0] || null,
+    reviews: savedReviews
+  });
+}
+
 async function handleClientErrorsApi(req, res) {
   if (req.method !== "POST") {
     sendText(res, 405, "Method Not Allowed");
@@ -995,6 +1213,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/admin/password") {
       await handleAdminPasswordApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/product-reviews") {
+      await handleProductReviewsApi(req, res);
       return;
     }
 

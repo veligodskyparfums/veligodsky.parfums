@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   "use strict";
 
   var store = window.VeligodskyStore;
@@ -12,6 +12,7 @@
 
   var state = {
     products: [],
+    homepageReviews: [],
     filteredProducts: [],
     visibleCount: 8,
     activeTab: "week"
@@ -27,8 +28,10 @@
   document.addEventListener("DOMContentLoaded", function () {
     init().catch(function () {
       state.products = store.getProducts();
+      state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
       bindEvents();
       syncSettingsToUI();
+      renderHomepageReviews();
       renderBrandFilter();
       renderTopSections();
       applyFilters(true);
@@ -38,7 +41,7 @@
       observeRevealElements();
       startAutoSync();
       startBackupNoticeClock();
-      showToast("Работаем офлайн: данные не синхронизированы с сервером.", true);
+      showToast("Р Р°Р±РѕС‚Р°РµРј РѕС„Р»Р°Р№РЅ: РґР°РЅРЅС‹Рµ РЅРµ СЃРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°РЅС‹ СЃ СЃРµСЂРІРµСЂРѕРј.", true);
     });
   });
 
@@ -48,9 +51,11 @@
       await store.init();
     }
     state.products = store.getProducts();
+    state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
 
     bindEvents();
     syncSettingsToUI();
+    renderHomepageReviews();
     renderBrandFilter();
     renderTopSections();
     applyFilters(true);
@@ -92,6 +97,9 @@
     elements.monthPanel = document.getElementById("topMonthPanel");
     elements.weekSlider = document.getElementById("topWeekSlider");
     elements.monthSlider = document.getElementById("topMonthSlider");
+    elements.homepageReviewsTrack = document.getElementById("homepageReviewsTrack");
+    elements.homepageReviewsPrev = document.getElementById("homepageReviewsPrev");
+    elements.homepageReviewsNext = document.getElementById("homepageReviewsNext");
 
     elements.headerTelegramBtn = document.getElementById("headerTelegramBtn");
     elements.consultTelegramBtn = document.getElementById("consultTelegramBtn");
@@ -168,11 +176,30 @@
       elements.checkoutBtn.addEventListener("click", checkoutOrder);
     }
 
+    if (elements.homepageReviewsPrev) {
+      elements.homepageReviewsPrev.addEventListener("click", function () {
+        scrollHomepageReviews(-1);
+      });
+    }
+
+    if (elements.homepageReviewsNext) {
+      elements.homepageReviewsNext.addEventListener("click", function () {
+        scrollHomepageReviews(1);
+      });
+    }
+
+    if (elements.homepageReviewsTrack) {
+      elements.homepageReviewsTrack.addEventListener("scroll", updateHomepageReviewsNavState);
+    }
+
     document.addEventListener("click", handleDocumentClick);
+    document.addEventListener("submit", handleDocumentSubmit);
 
     window.addEventListener("focus", function () {
       refreshFromServer(false);
     });
+
+    window.addEventListener("resize", updateHomepageReviewsNavState);
   }
 
   async function refreshFromServer(showErrorToast) {
@@ -181,13 +208,15 @@
         await store.syncFromServer();
       } catch (error) {
         if (showErrorToast) {
-          showToast("Не удалось обновить данные с сервера.", true);
+          showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РґР°РЅРЅС‹Рµ СЃ СЃРµСЂРІРµСЂР°.", true);
         }
       }
     }
 
     state.products = store.getProducts();
+    state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
     syncSettingsToUI();
+    renderHomepageReviews();
     renderBrandFilter();
     renderTopSections();
     applyFilters(false);
@@ -336,7 +365,7 @@
     var selected = elements.brandFilter.value || "all";
     var brands = store.getBrands(state.products);
 
-    var options = ["<option value=\"all\">Все бренды</option>"];
+    var options = ["<option value=\"all\">Р’СЃРµ Р±СЂРµРЅРґС‹</option>"];
     brands.forEach(function (brand) {
       options.push("<option value=\"" + escapeHtml(brand) + "\">" + escapeHtml(brand) + "</option>");
     });
@@ -370,7 +399,7 @@
     }
 
     if (!products.length) {
-      container.innerHTML = "<div class=\"empty-state\">Список топ-ароматов пока пуст. Добавьте отметки в админ-панели.</div>";
+      container.innerHTML = "<div class=\"empty-state\">РЎРїРёСЃРѕРє С‚РѕРї-Р°СЂРѕРјР°С‚РѕРІ РїРѕРєР° РїСѓСЃС‚. Р”РѕР±Р°РІСЊС‚Рµ РѕС‚РјРµС‚РєРё РІ Р°РґРјРёРЅ-РїР°РЅРµР»Рё.</div>";
       return;
     }
 
@@ -383,6 +412,81 @@
     }).join("");
 
     observeRevealElements();
+  }
+
+  function buildStars(value) {
+    var safeRating = Math.max(1, Math.min(5, Math.round(Number(value) || 5)));
+    return "в…".repeat(safeRating) + "в†".repeat(5 - safeRating);
+  }
+
+  function formatReviewDate(value) {
+    var parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return "";
+    }
+    return parsed.toLocaleDateString("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
+  }
+
+  function renderHomepageReviews() {
+    if (!elements.homepageReviewsTrack) {
+      return;
+    }
+
+    var reviews = Array.isArray(state.homepageReviews) ? state.homepageReviews : [];
+    if (!reviews.length) {
+      elements.homepageReviewsTrack.innerHTML = "<div class=\"empty-state\">РџРѕРєР° РѕС‚Р·С‹РІРѕРІ РЅРµС‚. РЎС‚Р°РЅСЊС‚Рµ РїРµСЂРІС‹Рј РїРѕРєСѓРїР°С‚РµР»РµРј, РєС‚Рѕ РїРѕРґРµР»РёС‚СЃСЏ РІРїРµС‡Р°С‚Р»РµРЅРёРµРј.</div>";
+      updateHomepageReviewsNavState();
+      return;
+    }
+
+    elements.homepageReviewsTrack.innerHTML = reviews.map(function (review) {
+      var authorLine = review.city
+        ? escapeHtml(review.author) + ", " + escapeHtml(review.city)
+        : escapeHtml(review.author);
+      var dateLabel = formatReviewDate(review.createdAt);
+      return ""
+        + "<article class=\"review-card\">"
+        + "  <div class=\"review-head\">"
+        + "    <strong>" + authorLine + "</strong>"
+        + "    <span>" + buildStars(review.rating) + "</span>"
+        + "  </div>"
+        + "  <p>" + escapeHtml(review.text) + "</p>"
+        + "  <small class=\"review-date\">" + escapeHtml(dateLabel) + "</small>"
+        + "</article>";
+    }).join("");
+
+    updateHomepageReviewsNavState();
+  }
+
+  function scrollHomepageReviews(direction) {
+    if (!elements.homepageReviewsTrack) {
+      return;
+    }
+
+    var step = Math.max(220, Math.round(elements.homepageReviewsTrack.clientWidth * 0.9));
+    elements.homepageReviewsTrack.scrollBy({
+      left: step * (direction < 0 ? -1 : 1),
+      behavior: "smooth"
+    });
+  }
+
+  function updateHomepageReviewsNavState() {
+    if (!elements.homepageReviewsTrack || !elements.homepageReviewsPrev || !elements.homepageReviewsNext) {
+      return;
+    }
+
+    var track = elements.homepageReviewsTrack;
+    var maxScrollLeft = Math.max(0, track.scrollWidth - track.clientWidth);
+    var current = Math.max(0, Math.round(track.scrollLeft));
+    var canGoPrev = current > 4;
+    var canGoNext = current < (maxScrollLeft - 4);
+
+    elements.homepageReviewsPrev.disabled = !canGoPrev;
+    elements.homepageReviewsNext.disabled = !canGoNext;
   }
 
   function switchTopTab(tab) {
@@ -455,7 +559,7 @@
     }
 
     if (!state.filteredProducts.length) {
-      elements.catalogGrid.innerHTML = "<div class=\"empty-state\">По заданным фильтрам ароматы не найдены.</div>";
+      elements.catalogGrid.innerHTML = "<div class=\"empty-state\">РџРѕ Р·Р°РґР°РЅРЅС‹Рј С„РёР»СЊС‚СЂР°Рј Р°СЂРѕРјР°С‚С‹ РЅРµ РЅР°Р№РґРµРЅС‹.</div>";
       elements.showMoreBtn.classList.add("hidden");
       return;
     }
@@ -480,6 +584,7 @@
     var volumeOptions = product.volumes.map(function (volume) {
       return "<option value=\"" + volume.ml + "\">" + volume.ml + " ml - " + store.formatPrice(volume.price) + "</option>";
     }).join("");
+    var reviewsHtml = config.compact ? "" : buildProductReviewsBlock(product);
 
     var topLabel = "";
     if (config.showTopBadge) {
@@ -514,8 +619,58 @@
       + "      </select>"
       + "    </label>"
       + "    <button class=\"btn btn-primary add-to-cart-btn\" type=\"button\">В корзину</button>"
+      + reviewsHtml
       + "  </div>"
       + "</article>";
+  }
+
+  function buildProductReviewsBlock(product) {
+    var reviews = Array.isArray(product.reviews) ? product.reviews : [];
+    var reviewsHtml = "";
+
+    if (!reviews.length) {
+      reviewsHtml = "<p class=\"product-review-empty\">Пока нет отзывов по этому аромату.</p>";
+    } else {
+      reviewsHtml = reviews.map(function (review) {
+        var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
+        var dateLabel = formatReviewDate(review.createdAt);
+        return ""
+          + "<article class=\"product-review-item\">"
+          + "  <div class=\"product-review-meta\">"
+          + "    <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
+          + "    <span class=\"product-review-stars\">" + buildStars(review.rating) + "</span>"
+          + "  </div>"
+          + "  <p class=\"product-review-text\">" + escapeHtml(review.text) + "</p>"
+          + "  <small class=\"product-review-meta\">" + escapeHtml(dateLabel) + "</small>"
+          + "</article>";
+      }).join("");
+    }
+
+    return ""
+      + "<section class=\"product-reviews\">"
+      + "  <div class=\"product-reviews-head\">"
+      + "    <strong>Отзывы покупателей</strong>"
+      + "    <span>Всего: " + reviews.length + "</span>"
+      + "  </div>"
+      + "  <div class=\"product-reviews-list\">"
+      + reviewsHtml
+      + "  </div>"
+      + "  <form class=\"product-review-form\" data-product-review-form data-product-id=\"" + escapeHtml(product.id) + "\">"
+      + "    <div class=\"product-review-form-row\">"
+      + "      <input type=\"text\" name=\"author\" maxlength=\"80\" placeholder=\"Ваше имя\" required>"
+      + "      <select name=\"rating\" aria-label=\"Оценка\">"
+      + "        <option value=\"5\">5 ★</option>"
+      + "        <option value=\"4\">4 ★</option>"
+      + "        <option value=\"3\">3 ★</option>"
+      + "        <option value=\"2\">2 ★</option>"
+      + "        <option value=\"1\">1 ★</option>"
+      + "      </select>"
+      + "    </div>"
+      + "    <input type=\"text\" name=\"city\" maxlength=\"80\" placeholder=\"Город (необязательно)\">"
+      + "    <textarea name=\"text\" maxlength=\"500\" placeholder=\"Напишите ваш отзыв\" required></textarea>"
+      + "    <button class=\"btn btn-outline product-review-submit\" type=\"submit\">Оставить отзыв</button>"
+      + "  </form>"
+      + "</section>";
   }
 
   function handleDocumentClick(event) {
@@ -531,7 +686,7 @@
       var result = store.addToCart(productId, selectedMl, 1);
 
       if (!result.ok) {
-        showToast(result.message || "Не удалось добавить товар.", true);
+        showToast(result.message || "РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ С‚РѕРІР°СЂ.", true);
         return;
       }
 
@@ -540,7 +695,7 @@
         product_id: productId,
         volume_ml: selectedMl
       });
-      showToast("Товар добавлен в корзину");
+      showToast("РўРѕРІР°СЂ РґРѕР±Р°РІР»РµРЅ РІ РєРѕСЂР·РёРЅСѓ");
       return;
     }
 
@@ -550,6 +705,101 @@
       var itemKey = cartActionButton.dataset.itemKey;
       processCartAction(action, itemKey);
       return;
+    }
+  }
+
+  function handleDocumentSubmit(event) {
+    var reviewForm = event.target.closest("[data-product-review-form]");
+    if (!reviewForm) {
+      return;
+    }
+
+    event.preventDefault();
+    submitProductReviewForm(reviewForm);
+  }
+
+  async function submitProductReviewForm(form) {
+    if (!form) {
+      return;
+    }
+
+    if (typeof store.submitProductReview !== "function") {
+      showToast("Отправка отзывов временно недоступна.", true);
+      return;
+    }
+
+    var productId = String(form.getAttribute("data-product-id") || "").trim();
+    var formData = new FormData(form);
+    var author = String(formData.get("author") || "").trim();
+    var city = String(formData.get("city") || "").trim();
+    var text = String(formData.get("text") || "").trim();
+    var rating = Math.max(1, Math.min(5, Math.round(Number(formData.get("rating")) || 5)));
+
+    if (!author || author.length < 2) {
+      showToast("Укажите имя для отзыва.", true);
+      return;
+    }
+
+    if (!text || text.length < 6) {
+      showToast("Текст отзыва должен быть не короче 6 символов.", true);
+      return;
+    }
+
+    var submitButton = form.querySelector("[type=\"submit\"]");
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+
+    try {
+      await store.submitProductReview(productId, {
+        author: author,
+        city: city,
+        text: text,
+        rating: rating
+      });
+
+      state.products = store.getProducts();
+      renderTopSections();
+      applyFilters(false);
+
+      form.reset();
+      var ratingSelect = form.querySelector("select[name=\"rating\"]");
+      if (ratingSelect) {
+        ratingSelect.value = "5";
+      }
+
+      showToast("Спасибо! Отзыв опубликован.");
+      trackEvent("product_review_submit", {
+        product_id: productId,
+        rating: rating
+      });
+    } catch (error) {
+      var message = String(error && error.message || "");
+      if (message.indexOf("REVIEW_RATE_LIMIT:") === 0) {
+        var waitSeconds = Math.max(0, Math.round(Number(message.split(":")[1]) || 0));
+        if (waitSeconds > 0) {
+          showToast("Слишком часто отправляете отзывы. Подождите " + waitSeconds + " сек.", true);
+        } else {
+          showToast("Слишком часто отправляете отзывы. Попробуйте чуть позже.", true);
+        }
+        return;
+      }
+
+      if (message.indexOf("INVALID_REVIEW_PAYLOAD:") === 0) {
+        showToast("Проверьте имя, оценку и текст отзыва.", true);
+        return;
+      }
+
+      if (message.indexOf("PRODUCT_NOT_FOUND") >= 0) {
+        showToast("Товар не найден. Обновите страницу.", true);
+        return;
+      }
+
+      showToast("Не удалось отправить отзыв. Попробуйте позже.", true);
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+      }
     }
   }
 
@@ -590,7 +840,7 @@
     }, 0);
 
     if (!cart.length) {
-      elements.cartItems.innerHTML = "<div class=\"empty-state\">Корзина пока пуста.</div>";
+      elements.cartItems.innerHTML = "<div class=\"empty-state\">РљРѕСЂР·РёРЅР° РїРѕРєР° РїСѓСЃС‚Р°.</div>";
     } else {
       elements.cartItems.innerHTML = cart.map(function (item) {
         var lineTotal = item.price * item.qty;
@@ -599,15 +849,15 @@
           + "  <img src=\"" + escapeHtml(item.image) + "\" alt=\"" + escapeHtml(item.name) + "\">"
           + "  <div class=\"cart-item-main\">"
           + "    <strong>" + escapeHtml(item.name) + "</strong>"
-          + "    <span>" + escapeHtml(item.brand) + " • " + item.ml + " ml</span>"
+          + "    <span>" + escapeHtml(item.brand) + " вЂў " + item.ml + " ml</span>"
           + "    <span>" + store.formatPrice(lineTotal) + "</span>"
           + "    <div class=\"cart-item-actions\">"
           + "      <div class=\"qty-controls\">"
-          + "        <button type=\"button\" data-cart-action=\"dec\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">−</button>"
+          + "        <button type=\"button\" data-cart-action=\"dec\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">в€’</button>"
           + "        <span>" + item.qty + "</span>"
           + "        <button type=\"button\" data-cart-action=\"inc\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">+</button>"
           + "      </div>"
-          + "      <button class=\"remove-btn\" type=\"button\" data-cart-action=\"remove\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">Удалить</button>"
+          + "      <button class=\"remove-btn\" type=\"button\" data-cart-action=\"remove\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">РЈРґР°Р»РёС‚СЊ</button>"
           + "    </div>"
           + "  </div>"
           + "</article>";
@@ -618,11 +868,11 @@
     elements.cartTotal.textContent = store.formatPrice(total);
 
     if (total >= settings.freeShippingThreshold) {
-      elements.shippingStatus.textContent = "✅ Бесплатная доставка!";
+      elements.shippingStatus.textContent = "вњ… Р‘РµСЃРїР»Р°С‚РЅР°СЏ РґРѕСЃС‚Р°РІРєР°!";
       elements.shippingStatus.classList.add("success");
     } else {
       var left = settings.freeShippingThreshold - total;
-      elements.shippingStatus.textContent = "До бесплатной доставки осталось " + store.formatPrice(left);
+      elements.shippingStatus.textContent = "Р”Рѕ Р±РµСЃРїР»Р°С‚РЅРѕР№ РґРѕСЃС‚Р°РІРєРё РѕСЃС‚Р°Р»РѕСЃСЊ " + store.formatPrice(left);
       elements.shippingStatus.classList.remove("success");
     }
   }
@@ -630,7 +880,7 @@
   function checkoutOrder() {
     var cart = store.getCart();
     if (!cart.length) {
-      showToast("Добавьте хотя бы один товар в корзину.", true);
+      showToast("Р”РѕР±Р°РІСЊС‚Рµ С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ С‚РѕРІР°СЂ РІ РєРѕСЂР·РёРЅСѓ.", true);
       return;
     }
 
@@ -707,3 +957,4 @@
       .replace(/'/g, "&#039;");
   }
 })();
+
