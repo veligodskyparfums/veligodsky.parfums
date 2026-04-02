@@ -41,7 +41,7 @@
       observeRevealElements();
       startAutoSync();
       startBackupNoticeClock();
-      showToast("Р Р°Р±РѕС‚Р°РµРј РѕС„Р»Р°Р№РЅ: РґР°РЅРЅС‹Рµ РЅРµ СЃРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°РЅС‹ СЃ СЃРµСЂРІРµСЂРѕРј.", true);
+      showToast("Работаем офлайн: данные не синхронизированы с сервером.", true);
     });
   });
 
@@ -208,7 +208,7 @@
         await store.syncFromServer();
       } catch (error) {
         if (showErrorToast) {
-          showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РґР°РЅРЅС‹Рµ СЃ СЃРµСЂРІРµСЂР°.", true);
+          showToast("Не удалось обновить данные с сервера.", true);
         }
       }
     }
@@ -365,7 +365,7 @@
     var selected = elements.brandFilter.value || "all";
     var brands = store.getBrands(state.products);
 
-    var options = ["<option value=\"all\">Р’СЃРµ Р±СЂРµРЅРґС‹</option>"];
+    var options = ["<option value=\"all\">Все бренды</option>"];
     brands.forEach(function (brand) {
       options.push("<option value=\"" + escapeHtml(brand) + "\">" + escapeHtml(brand) + "</option>");
     });
@@ -399,7 +399,7 @@
     }
 
     if (!products.length) {
-      container.innerHTML = "<div class=\"empty-state\">РЎРїРёСЃРѕРє С‚РѕРї-Р°СЂРѕРјР°С‚РѕРІ РїРѕРєР° РїСѓСЃС‚. Р”РѕР±Р°РІСЊС‚Рµ РѕС‚РјРµС‚РєРё РІ Р°РґРјРёРЅ-РїР°РЅРµР»Рё.</div>";
+      container.innerHTML = "<div class=\"empty-state\">Список топ-ароматов пока пуст. Добавьте отметки в админ-панели.</div>";
       return;
     }
 
@@ -416,7 +416,7 @@
 
   function buildStars(value) {
     var safeRating = Math.max(1, Math.min(5, Math.round(Number(value) || 5)));
-    return "в…".repeat(safeRating) + "в†".repeat(5 - safeRating);
+    return "★".repeat(safeRating) + "☆".repeat(5 - safeRating);
   }
 
   function formatReviewDate(value) {
@@ -438,7 +438,7 @@
 
     var reviews = Array.isArray(state.homepageReviews) ? state.homepageReviews : [];
     if (!reviews.length) {
-      elements.homepageReviewsTrack.innerHTML = "<div class=\"empty-state\">РџРѕРєР° РѕС‚Р·С‹РІРѕРІ РЅРµС‚. РЎС‚Р°РЅСЊС‚Рµ РїРµСЂРІС‹Рј РїРѕРєСѓРїР°С‚РµР»РµРј, РєС‚Рѕ РїРѕРґРµР»РёС‚СЃСЏ РІРїРµС‡Р°С‚Р»РµРЅРёРµРј.</div>";
+      elements.homepageReviewsTrack.innerHTML = "<div class=\"empty-state\">Пока отзывов нет. Станьте первым покупателем, кто поделится впечатлением.</div>";
       updateHomepageReviewsNavState();
       return;
     }
@@ -559,7 +559,7 @@
     }
 
     if (!state.filteredProducts.length) {
-      elements.catalogGrid.innerHTML = "<div class=\"empty-state\">РџРѕ Р·Р°РґР°РЅРЅС‹Рј С„РёР»СЊС‚СЂР°Рј Р°СЂРѕРјР°С‚С‹ РЅРµ РЅР°Р№РґРµРЅС‹.</div>";
+      elements.catalogGrid.innerHTML = "<div class=\"empty-state\">По заданным фильтрам ароматы не найдены.</div>";
       elements.showMoreBtn.classList.add("hidden");
       return;
     }
@@ -686,7 +686,7 @@
       var result = store.addToCart(productId, selectedMl, 1);
 
       if (!result.ok) {
-        showToast(result.message || "РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ С‚РѕРІР°СЂ.", true);
+        showToast(result.message || "Не удалось добавить товар.", true);
         return;
       }
 
@@ -695,7 +695,7 @@
         product_id: productId,
         volume_ml: selectedMl
       });
-      showToast("РўРѕРІР°СЂ РґРѕР±Р°РІР»РµРЅ РІ РєРѕСЂР·РёРЅСѓ");
+      showToast("Товар добавлен в корзину");
       return;
     }
 
@@ -840,7 +840,7 @@
     }, 0);
 
     if (!cart.length) {
-      elements.cartItems.innerHTML = "<div class=\"empty-state\">РљРѕСЂР·РёРЅР° РїРѕРєР° РїСѓСЃС‚Р°.</div>";
+      elements.cartItems.innerHTML = "<div class=\"empty-state\">Корзина пока пуста.</div>";
     } else {
       elements.cartItems.innerHTML = cart.map(function (item) {
         var lineTotal = item.price * item.qty;
@@ -849,15 +849,15 @@
           + "  <img src=\"" + escapeHtml(item.image) + "\" alt=\"" + escapeHtml(item.name) + "\">"
           + "  <div class=\"cart-item-main\">"
           + "    <strong>" + escapeHtml(item.name) + "</strong>"
-          + "    <span>" + escapeHtml(item.brand) + " вЂў " + item.ml + " ml</span>"
+          + "    <span>" + escapeHtml(item.brand) + " | " + item.ml + " ml</span>"
           + "    <span>" + store.formatPrice(lineTotal) + "</span>"
           + "    <div class=\"cart-item-actions\">"
           + "      <div class=\"qty-controls\">"
-          + "        <button type=\"button\" data-cart-action=\"dec\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">в€’</button>"
+          + "        <button type=\"button\" data-cart-action=\"dec\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">-</button>"
           + "        <span>" + item.qty + "</span>"
           + "        <button type=\"button\" data-cart-action=\"inc\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">+</button>"
           + "      </div>"
-          + "      <button class=\"remove-btn\" type=\"button\" data-cart-action=\"remove\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">РЈРґР°Р»РёС‚СЊ</button>"
+          + "      <button class=\"remove-btn\" type=\"button\" data-cart-action=\"remove\" data-item-key=\"" + escapeHtml(item.itemKey) + "\">Удалить</button>"
           + "    </div>"
           + "  </div>"
           + "</article>";
@@ -868,11 +868,11 @@
     elements.cartTotal.textContent = store.formatPrice(total);
 
     if (total >= settings.freeShippingThreshold) {
-      elements.shippingStatus.textContent = "вњ… Р‘РµСЃРїР»Р°С‚РЅР°СЏ РґРѕСЃС‚Р°РІРєР°!";
+      elements.shippingStatus.textContent = "Бесплатная доставка!";
       elements.shippingStatus.classList.add("success");
     } else {
       var left = settings.freeShippingThreshold - total;
-      elements.shippingStatus.textContent = "Р”Рѕ Р±РµСЃРїР»Р°С‚РЅРѕР№ РґРѕСЃС‚Р°РІРєРё РѕСЃС‚Р°Р»РѕСЃСЊ " + store.formatPrice(left);
+      elements.shippingStatus.textContent = "До бесплатной доставки осталось " + store.formatPrice(left);
       elements.shippingStatus.classList.remove("success");
     }
   }
@@ -880,7 +880,7 @@
   function checkoutOrder() {
     var cart = store.getCart();
     if (!cart.length) {
-      showToast("Р”РѕР±Р°РІСЊС‚Рµ С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ С‚РѕРІР°СЂ РІ РєРѕСЂР·РёРЅСѓ.", true);
+      showToast("Добавьте хотя бы один товар в корзину.", true);
       return;
     }
 
