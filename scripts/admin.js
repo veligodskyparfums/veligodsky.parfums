@@ -887,6 +887,27 @@
   }
 
   function onProductListClick(event) {
+    var reviewActionButton = event.target.closest("[data-product-review-action]");
+    if (reviewActionButton) {
+      var reviewAction = String(reviewActionButton.dataset.productReviewAction || "");
+      var reviewProductId = String(reviewActionButton.dataset.productId || "");
+      var reviewId = String(reviewActionButton.dataset.reviewId || "");
+
+      if (!reviewProductId || !reviewId) {
+        return;
+      }
+
+      if (reviewAction === "edit") {
+        editProductReview(reviewProductId, reviewId);
+        return;
+      }
+
+      if (reviewAction === "delete") {
+        deleteProductReview(reviewProductId, reviewId);
+        return;
+      }
+    }
+
     var actionButton = event.target.closest("[data-action]");
     if (!actionButton) {
       return;
@@ -937,18 +958,195 @@
     }
   }
 
+  function findProductReviewEntry(productId, reviewId) {
+    var products = store.getProducts();
+    var product = products.find(function (item) {
+      return String(item && item.id) === String(productId);
+    });
+    if (!product) {
+      return null;
+    }
+
+    var reviews = Array.isArray(product.reviews) ? product.reviews : [];
+    var review = reviews.find(function (item) {
+      return String(item && item.id) === String(reviewId);
+    });
+
+    if (!review) {
+      return null;
+    }
+
+    return {
+      product: product,
+      review: review,
+      products: products
+    };
+  }
+
+  async function editProductReview(productId, reviewId) {
+    var entry = findProductReviewEntry(productId, reviewId);
+    if (!entry) {
+      showToast("Отзыв не найден.", true);
+      return;
+    }
+
+    var nextAuthor = window.prompt("Имя автора:", String(entry.review.author || ""));
+    if (nextAuthor === null) {
+      return;
+    }
+    nextAuthor = String(nextAuthor || "").trim();
+    if (!nextAuthor || nextAuthor.length < 2) {
+      showToast("Имя автора должно быть не короче 2 символов.", true);
+      return;
+    }
+
+    var nextCity = window.prompt("Город (можно оставить пустым):", String(entry.review.city || ""));
+    if (nextCity === null) {
+      return;
+    }
+    nextCity = String(nextCity || "").trim();
+
+    var nextRatingRaw = window.prompt(
+      "Оценка от 1 до 5:",
+      String(Math.max(1, Math.min(5, Math.round(Number(entry.review.rating) || 5))))
+    );
+    if (nextRatingRaw === null) {
+      return;
+    }
+
+    var parsedRating = Number(nextRatingRaw);
+    if (!Number.isFinite(parsedRating)) {
+      showToast("Оценка должна быть числом от 1 до 5.", true);
+      return;
+    }
+
+    var nextRating = Math.max(1, Math.min(5, Math.round(parsedRating)));
+    var nextText = window.prompt("Текст отзыва:", String(entry.review.text || ""));
+    if (nextText === null) {
+      return;
+    }
+    nextText = String(nextText || "").trim();
+    if (!nextText || nextText.length < 6) {
+      showToast("Текст отзыва должен быть не короче 6 символов.", true);
+      return;
+    }
+
+    var nextProducts = entry.products.map(function (product) {
+      if (String(product.id) !== String(productId)) {
+        return product;
+      }
+
+      var currentReviews = Array.isArray(product.reviews) ? product.reviews : [];
+      var updatedReviews = currentReviews.map(function (review) {
+        if (String(review && review.id) !== String(reviewId)) {
+          return review;
+        }
+        return Object.assign({}, review, {
+          author: nextAuthor,
+          city: nextCity,
+          rating: nextRating,
+          text: nextText
+        });
+      });
+
+      return Object.assign({}, product, {
+        reviews: updatedReviews
+      });
+    });
+
+    try {
+      await store.saveProducts(nextProducts);
+      renderProducts();
+      showToast("Отзыв обновлён.");
+    } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      showToast("Не удалось обновить отзыв на сервере.", true);
+    }
+  }
+
+  async function deleteProductReview(productId, reviewId) {
+    var entry = findProductReviewEntry(productId, reviewId);
+    if (!entry) {
+      showToast("Отзыв не найден.", true);
+      return;
+    }
+
+    var ok = window.confirm("Удалить отзыв автора \"" + entry.review.author + "\" для аромата \"" + entry.product.name + "\"?");
+    if (!ok) {
+      return;
+    }
+
+    var nextProducts = entry.products.map(function (product) {
+      if (String(product.id) !== String(productId)) {
+        return product;
+      }
+
+      var currentReviews = Array.isArray(product.reviews) ? product.reviews : [];
+      return Object.assign({}, product, {
+        reviews: currentReviews.filter(function (review) {
+          return String(review && review.id) !== String(reviewId);
+        })
+      });
+    });
+
+    try {
+      await store.saveProducts(nextProducts);
+      renderProducts();
+      showToast("Отзыв удалён.");
+    } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      showToast("Не удалось удалить отзыв на сервере.", true);
+    }
+  }
+
   function renderProducts() {
     var products = store.getProducts();
 
     if (!products.length) {
-      elements.adminProductsList.innerHTML = "<div class=\"empty-state\">Каталог пуст. Добавьте первый аромат.</div>";
+      elements.adminProductsList.innerHTML = "<div class=\"empty-state\">\u041a\u0430\u0442\u0430\u043b\u043e\u0433 \u043f\u0443\u0441\u0442. \u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u043f\u0435\u0440\u0432\u044b\u0439 \u0430\u0440\u043e\u043c\u0430\u0442.\u003c/div>";
       return;
     }
 
     elements.adminProductsList.innerHTML = products.map(function (product) {
       var volumesLine = product.volumes.map(function (volume) {
         return volume.ml + "ml - " + store.formatPrice(volume.price);
-      }).join(" | ");
+      }).join(" | " );
+
+      var productReviews = Array.isArray(product.reviews) ? product.reviews : [];
+      var productReviewsHtml = "";
+
+      if (!productReviews.length) {
+        productReviewsHtml = "<div class=\"admin-product-review-empty\">\u041f\u043e\u043a\u0430 \u043d\u0435\u0442 \u043e\u0442\u0437\u044b\u0432\u043e\u0432 \u043f\u043e \u044d\u0442\u043e\u043c\u0443 \u0430\u0440\u043e\u043c\u0430\u0442\u0443.\u003c/div>";
+      } else {
+        productReviewsHtml = "<div class=\"admin-product-reviews-list\">"
+          + productReviews.map(function (review) {
+            var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
+            return ""
+              + "<article class=\"admin-review-card\">"
+              + "  <div class=\"admin-review-head\">"
+              + "    <div>"
+              + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
+              + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
+              + "    </div>"
+              + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
+              + "  </div>"
+              + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
+              + "  <div class=\"admin-review-actions\">"
+              + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-review-action=\"edit\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c</button>"
+              + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-review-action=\"delete\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u0423\u0434\u0430\u043b\u0438\u0442\u044c</button>"
+              + "  </div>"
+              + "</article>";
+          }).join("")
+          + "</div>";
+      }
 
       return ""
         + "<article class=\"admin-product-card\">"
@@ -957,17 +1155,24 @@
         + "    <div class=\"admin-product-head\">"
         + "      <div class=\"admin-product-title\">"
         + "        <strong>" + escapeHtml(product.name) + "</strong>"
-        + "        <span>" + escapeHtml(product.brand) + " • " + store.getGenderLabel(product.gender) + "</span>"
+        + "        <span>" + escapeHtml(product.brand) + " | " + store.getGenderLabel(product.gender) + "</span>"
         + "      </div>"
         + "      <div class=\"admin-product-actions\">"
-        + "        <button class=\"btn btn-ghost\" type=\"button\" data-action=\"edit\" data-id=\"" + escapeHtml(product.id) + "\">Редактировать</button>"
-        + "        <button class=\"btn btn-ghost\" type=\"button\" data-action=\"delete\" data-id=\"" + escapeHtml(product.id) + "\">Удалить</button>"
+        + "        <button class=\"btn btn-ghost\" type=\"button\" data-action=\"edit\" data-id=\"" + escapeHtml(product.id) + "\">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c</button>"
+        + "        <button class=\"btn btn-ghost\" type=\"button\" data-action=\"delete\" data-id=\"" + escapeHtml(product.id) + "\">\u0423\u0434\u0430\u043b\u0438\u0442\u044c</button>"
         + "      </div>"
         + "    </div>"
         + "    <p class=\"meta-line\">" + escapeHtml(volumesLine) + "</p>"
         + "    <div class=\"admin-product-actions\">"
-        + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"week\" data-id=\"" + escapeHtml(product.id) + "\" " + (product.topWeek ? "checked" : "") + ">Топ недели</label>"
-        + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"month\" data-id=\"" + escapeHtml(product.id) + "\" " + (product.topMonth ? "checked" : "") + ">Топ месяца</label>"
+        + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"week\" data-id=\"" + escapeHtml(product.id) + "\" " + (product.topWeek ? "checked" : "") + ">\u0422\u043e\u043f \u043d\u0435\u0434\u0435\u043b\u0438</label>"
+        + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"month\" data-id=\"" + escapeHtml(product.id) + "\" " + (product.topMonth ? "checked" : "") + ">\u0422\u043e\u043f \u043c\u0435\u0441\u044f\u0446\u0430</label>"
+        + "    </div>"
+        + "    <div class=\"admin-product-reviews\">"
+        + "      <div class=\"admin-product-reviews-head\">"
+        + "        <strong>\u041e\u0442\u0437\u044b\u0432\u044b \u043a \u0430\u0440\u043e\u043c\u0430\u0442\u0443</strong>"
+        + "        <span>\u0412\u0441\u0435\u0433\u043e: " + productReviews.length + "</span>"
+        + "      </div>"
+        + productReviewsHtml
         + "    </div>"
         + "  </div>"
         + "</article>";
@@ -976,7 +1181,7 @@
 
   function buildStars(value) {
     var safeRating = Math.max(1, Math.min(5, Math.round(Number(value) || 5)));
-    return "★".repeat(safeRating) + "☆".repeat(5 - safeRating);
+    return "\u2605".repeat(safeRating) + "\u2606".repeat(5 - safeRating);
   }
 
   function formatReviewDate(value) {
