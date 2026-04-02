@@ -9,13 +9,15 @@
   var MSK_BACKUP_NOTICE_TIMEZONE = "Europe/Moscow";
   var MSK_BACKUP_NOTICE_START_MINUTE = 15;
   var MSK_BACKUP_NOTICE_END_MINUTE = 5 * 60;
+  var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
 
   var state = {
     products: [],
     homepageReviews: [],
     filteredProducts: [],
     visibleCount: 8,
-    activeTab: "week"
+    activeTab: "week",
+    reviewDrafts: readStoredProductReviewDrafts()
   };
 
   var elements = {};
@@ -193,9 +195,14 @@
     }
 
     document.addEventListener("click", handleDocumentClick);
+    document.addEventListener("input", handleDocumentInput);
+    document.addEventListener("change", handleDocumentInput);
     document.addEventListener("submit", handleDocumentSubmit);
 
     window.addEventListener("focus", function () {
+      if (shouldPauseAutoSync()) {
+        return;
+      }
       refreshFromServer(false);
     });
 
@@ -203,6 +210,12 @@
   }
 
   async function refreshFromServer(showErrorToast) {
+    captureProductReviewDraftsFromDom();
+    if (hasProductReviewDrafts()) {
+      restoreProductReviewDrafts();
+      return;
+    }
+
     if (typeof store.syncFromServer === "function") {
       try {
         await store.syncFromServer();
@@ -233,11 +246,17 @@
     }
 
     syncIntervalId = setInterval(function () {
+      if (shouldPauseAutoSync()) {
+        return;
+      }
       refreshFromServer(false);
     }, 30000);
 
     document.addEventListener("visibilitychange", function () {
       if (!document.hidden) {
+        if (shouldPauseAutoSync()) {
+          return;
+        }
         refreshFromServer(false);
       }
     });
@@ -576,6 +595,7 @@
 
     var hasMore = state.visibleCount < state.filteredProducts.length;
     elements.showMoreBtn.classList.toggle("hidden", !hasMore);
+    restoreProductReviewDrafts();
     observeRevealElements();
   }
 
@@ -718,6 +738,138 @@
     submitProductReviewForm(reviewForm);
   }
 
+  function handleDocumentInput(event) {
+    var reviewForm = event.target.closest("[data-product-review-form]");
+    if (!reviewForm) {
+      return;
+    }
+    saveProductReviewDraft(reviewForm);
+  }
+
+  function isEditingProductReviewForm() {
+    if (!document.activeElement || typeof document.activeElement.closest !== "function") {
+      return false;
+    }
+    return Boolean(document.activeElement.closest("[data-product-review-form]"));
+  }
+
+  function readStoredProductReviewDrafts() {
+    try {
+      var raw = sessionStorage.getItem(PRODUCT_REVIEW_DRAFTS_KEY);
+      if (!raw) {
+        return {};
+      }
+
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return {};
+      }
+
+      return parsed;
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function persistProductReviewDrafts() {
+    try {
+      if (!Object.keys(state.reviewDrafts).length) {
+        sessionStorage.removeItem(PRODUCT_REVIEW_DRAFTS_KEY);
+        return;
+      }
+
+      sessionStorage.setItem(PRODUCT_REVIEW_DRAFTS_KEY, JSON.stringify(state.reviewDrafts));
+    } catch (error) {
+      return;
+    }
+  }
+
+  function hasProductReviewDrafts() {
+    return Object.keys(state.reviewDrafts).length > 0;
+  }
+
+  function shouldPauseAutoSync() {
+    captureProductReviewDraftsFromDom();
+    return isEditingProductReviewForm() || hasProductReviewDrafts();
+  }
+
+  function saveProductReviewDraft(form) {
+    if (!form) {
+      return;
+    }
+
+    var productId = String(form.getAttribute("data-product-id") || "").trim();
+    if (!productId) {
+      return;
+    }
+
+    var authorInput = form.querySelector("[name=\"author\"]");
+    var cityInput = form.querySelector("[name=\"city\"]");
+    var textInput = form.querySelector("[name=\"text\"]");
+    var ratingInput = form.querySelector("[name=\"rating\"]");
+
+    var draft = {
+      author: authorInput ? String(authorInput.value || "") : "",
+      city: cityInput ? String(cityInput.value || "") : "",
+      text: textInput ? String(textInput.value || "") : "",
+      rating: ratingInput ? String(ratingInput.value || "5") : "5"
+    };
+
+    var isEmpty = !draft.author.trim()
+      && !draft.city.trim()
+      && !draft.text.trim()
+      && draft.rating === "5";
+
+    if (isEmpty) {
+      delete state.reviewDrafts[productId];
+      persistProductReviewDrafts();
+      return;
+    }
+
+    state.reviewDrafts[productId] = draft;
+    persistProductReviewDrafts();
+  }
+
+  function captureProductReviewDraftsFromDom() {
+    var forms = document.querySelectorAll("[data-product-review-form]");
+    forms.forEach(function (form) {
+      saveProductReviewDraft(form);
+    });
+  }
+
+  function restoreProductReviewDrafts() {
+    var forms = document.querySelectorAll("[data-product-review-form]");
+    forms.forEach(function (form) {
+      var productId = String(form.getAttribute("data-product-id") || "").trim();
+      if (!productId) {
+        return;
+      }
+
+      var draft = state.reviewDrafts[productId];
+      if (!draft) {
+        return;
+      }
+
+      var authorInput = form.querySelector("[name=\"author\"]");
+      var cityInput = form.querySelector("[name=\"city\"]");
+      var textInput = form.querySelector("[name=\"text\"]");
+      var ratingInput = form.querySelector("[name=\"rating\"]");
+
+      if (authorInput) {
+        authorInput.value = draft.author || "";
+      }
+      if (cityInput) {
+        cityInput.value = draft.city || "";
+      }
+      if (textInput) {
+        textInput.value = draft.text || "";
+      }
+      if (ratingInput) {
+        ratingInput.value = draft.rating || "5";
+      }
+    });
+  }
+
   async function submitProductReviewForm(form) {
     if (!form) {
       return;
@@ -758,6 +910,8 @@
         rating: rating
       });
 
+      delete state.reviewDrafts[productId];
+      persistProductReviewDrafts();
       state.products = store.getProducts();
       renderTopSections();
       applyFilters(false);
