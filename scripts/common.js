@@ -7,6 +7,7 @@
   var API_DATA_URL = "/api/store-data";
   var API_ADMIN_AUTH_URL = "/api/admin/auth";
   var API_ADMIN_PASSWORD_URL = "/api/admin/password";
+  var API_HOMEPAGE_REVIEWS_URL = "/api/homepage-reviews";
   var API_PRODUCT_REVIEWS_URL = "/api/product-reviews";
   var ADMIN_TOKEN_KEY = "veligodsky_admin_token_v1";
   var numberFormatter = new Intl.NumberFormat("ru-RU");
@@ -709,6 +710,20 @@
     return Array.isArray(saved.reviews) ? saved.reviews : [];
   }
 
+  function applyHomepageReviewsCache(reviews) {
+    var nextReviews = normalizeReviewList(reviews, {
+      prefix: "hr",
+      maxItems: 30,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+
+    var data = loadData();
+    data.reviews = nextReviews;
+    saveData(data);
+    return nextReviews;
+  }
+
   function applyProductReviewsCache(productId, reviews) {
     var safeProductId = String(productId || "").trim();
     if (!safeProductId) {
@@ -795,6 +810,59 @@
     });
 
     applyProductReviewsCache(safeProductId, nextReviews);
+    return nextReviews;
+  }
+
+  async function submitHomepageReview(reviewPayload) {
+    if (!canUseRemoteStore()) {
+      throw new Error("REMOTE_STORE_REQUIRED");
+    }
+
+    var payload = {
+      author: String(reviewPayload && reviewPayload.author || "").trim(),
+      city: String(reviewPayload && reviewPayload.city || "").trim(),
+      text: String(reviewPayload && reviewPayload.text || "").trim(),
+      rating: Math.max(1, Math.min(5, Math.round(toNumber(reviewPayload && reviewPayload.rating, 5))))
+    };
+
+    var response = await fetch(API_HOMEPAGE_REVIEWS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.status === 429) {
+      var retryAfter = Math.max(0, Math.round(Number(response.headers.get("Retry-After")) || 0));
+      throw new Error("REVIEW_RATE_LIMIT:" + retryAfter);
+    }
+
+    if (response.status === 400) {
+      var validationPayload = null;
+      try {
+        validationPayload = await response.json();
+      } catch (error) {
+        validationPayload = null;
+      }
+      var validationCode = String(validationPayload && validationPayload.error || "INVALID_REVIEW_PAYLOAD");
+      throw new Error("INVALID_REVIEW_PAYLOAD:" + validationCode);
+    }
+
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var result = await response.json();
+    var nextReviews = normalizeReviewList(result && result.reviews, {
+      prefix: "hr",
+      maxItems: 30,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+
+    applyHomepageReviewsCache(nextReviews);
     return nextReviews;
   }
 
@@ -1048,6 +1116,7 @@
     API_DATA_URL: API_DATA_URL,
     API_ADMIN_AUTH_URL: API_ADMIN_AUTH_URL,
     API_ADMIN_PASSWORD_URL: API_ADMIN_PASSWORD_URL,
+    API_HOMEPAGE_REVIEWS_URL: API_HOMEPAGE_REVIEWS_URL,
     API_PRODUCT_REVIEWS_URL: API_PRODUCT_REVIEWS_URL,
     init: init,
     syncFromServer: syncFromServer,
@@ -1063,6 +1132,7 @@
     saveProducts: saveProducts,
     getHomepageReviews: getHomepageReviews,
     saveHomepageReviews: saveHomepageReviews,
+    submitHomepageReview: submitHomepageReview,
     submitProductReview: submitProductReview,
     getSettings: getSettings,
     updateSettings: updateSettings,

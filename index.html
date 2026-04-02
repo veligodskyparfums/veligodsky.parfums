@@ -210,6 +210,57 @@
             &#8594;
           </button>
         </div>
+
+        <div class="reviews-feedback reveal">
+          <div class="reviews-feedback-card">
+            <div class="reviews-feedback-head">
+              <h3>Оставить отзыв</h3>
+              <p>Поделитесь впечатлением о покупке и сервисе. Ваш отзыв появится в этом блоке сразу после отправки.</p>
+            </div>
+
+            <form class="reviews-feedback-form" id="homepageReviewForm" data-homepage-review-form>
+              <div class="reviews-feedback-row">
+                <input
+                  type="text"
+                  name="author"
+                  maxlength="80"
+                  minlength="2"
+                  placeholder="Ваше имя"
+                  autocomplete="name"
+                  required
+                >
+                <input
+                  type="text"
+                  name="city"
+                  maxlength="80"
+                  placeholder="Город"
+                  autocomplete="address-level2"
+                >
+                <select name="rating" aria-label="Оценка">
+                  <option value="5">5 ★★★★★</option>
+                  <option value="4">4 ★★★★☆</option>
+                  <option value="3">3 ★★★☆☆</option>
+                  <option value="2">2 ★★☆☆☆</option>
+                  <option value="1">1 ★☆☆☆☆</option>
+                </select>
+              </div>
+
+              <textarea
+                name="text"
+                rows="4"
+                maxlength="500"
+                minlength="6"
+                placeholder="Напишите, что вам понравилось: подбор аромата, упаковка, скорость доставки, консультация и т.д."
+                required
+              ></textarea>
+
+              <div class="reviews-feedback-actions">
+                <button class="btn btn-primary" type="submit">Опубликовать отзыв</button>
+                <span class="reviews-feedback-note">Можно оставить отзыв без регистрации.</span>
+              </div>
+            </form>
+          </div>
+        </div>
       </div>
     </section>
 

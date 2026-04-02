@@ -23,6 +23,7 @@ const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60 * 1000;
 const MAX_REVIEW_AUTHOR_LENGTH = 80;
 const MAX_REVIEW_CITY_LENGTH = 80;
 const MAX_REVIEW_TEXT_LENGTH = 500;
+const MAX_HOMEPAGE_REVIEWS = 30;
 const MAX_PRODUCT_REVIEWS_PER_PRODUCT = 80;
 
 const RATE_LIMIT_RULES = {
@@ -67,6 +68,12 @@ const RATE_LIMIT_RULES = {
     max: 20,
     windowMs: 60 * 1000,
     message: "Too many review submissions"
+  },
+  homepageReviews: {
+    name: "homepage_reviews",
+    max: 12,
+    windowMs: 60 * 1000,
+    message: "Too many homepage review submissions"
   }
 };
 
@@ -156,6 +163,10 @@ function getRateLimitRule(pathname, method) {
 
   if (safePath === "/api/product-reviews" && safeMethod === "POST") {
     return RATE_LIMIT_RULES.productReviews;
+  }
+
+  if (safePath === "/api/homepage-reviews" && safeMethod === "POST") {
+    return RATE_LIMIT_RULES.homepageReviews;
   }
 
   if (safePath === "/api/store-data" && safeMethod === "PUT") {
@@ -363,20 +374,16 @@ function normalizeStoredReviewList(rawReviews, prefix, maxItems) {
   return normalized;
 }
 
-function parseIncomingProductReview(payload) {
+function parseIncomingReviewPayload(payload) {
   if (!payload || typeof payload !== "object") {
     throw new Error("INVALID_REVIEW_PAYLOAD");
   }
 
-  const productId = safeString(payload.productId).slice(0, 120);
   const author = safeString(payload.author).slice(0, MAX_REVIEW_AUTHOR_LENGTH);
   const city = safeString(payload.city).slice(0, MAX_REVIEW_CITY_LENGTH);
   const text = safeString(payload.text).slice(0, MAX_REVIEW_TEXT_LENGTH);
   const rating = clampInteger(payload.rating, 1, 5, 5);
 
-  if (!productId) {
-    throw new Error("PRODUCT_ID_REQUIRED");
-  }
   if (!author || author.length < 2) {
     throw new Error("AUTHOR_REQUIRED");
   }
@@ -391,6 +398,21 @@ function parseIncomingProductReview(payload) {
     text,
     rating
   };
+}
+
+function parseIncomingProductReview(payload) {
+  const review = parseIncomingReviewPayload(payload);
+  const productId = safeString(payload && payload.productId).slice(0, 120);
+
+  if (!productId) {
+    throw new Error("PRODUCT_ID_REQUIRED");
+  }
+
+  return Object.assign({ productId }, review);
+}
+
+function parseIncomingHomepageReview(payload) {
+  return parseIncomingReviewPayload(payload);
 }
 
 function readAdminPassword(data) {
@@ -1083,6 +1105,83 @@ async function handleProductReviewsApi(req, res) {
   });
 }
 
+async function handleHomepageReviewsApi(req, res) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  let raw;
+  let parsed;
+
+  try {
+    raw = await readRequestBody(req);
+  } catch (error) {
+    if (error.message === "BODY_TOO_LARGE") {
+      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    parsed = JSON.parse(raw || "{}");
+  } catch (error) {
+    sendJson(res, 400, { error: "INVALID_JSON" });
+    return;
+  }
+
+  let incomingReview;
+  try {
+    incomingReview = parseIncomingHomepageReview(parsed);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message || "INVALID_REVIEW_PAYLOAD" });
+    return;
+  }
+
+  const currentData = await storeRepository.read();
+  const nextData = cloneData(validateStoreData(currentData));
+  const reviews = normalizeStoredReviewList(
+    nextData.reviews,
+    "hr",
+    MAX_HOMEPAGE_REVIEWS
+  );
+
+  const newReview = normalizeStoredReview({
+    id: "hr_" + crypto.randomBytes(6).toString("hex"),
+    author: incomingReview.author,
+    city: incomingReview.city,
+    text: incomingReview.text,
+    rating: incomingReview.rating,
+    createdAt: new Date().toISOString()
+  }, "hr");
+
+  reviews.unshift(newReview);
+  nextData.reviews = normalizeStoredReviewList(
+    reviews,
+    "hr",
+    MAX_HOMEPAGE_REVIEWS
+  );
+
+  const saved = await storeRepository.write(nextData);
+  const savedReviews = normalizeStoredReviewList(
+    saved && saved.reviews,
+    "hr",
+    MAX_HOMEPAGE_REVIEWS
+  );
+
+  sendJson(res, 201, {
+    ok: true,
+    review: savedReviews[0] || null,
+    reviews: savedReviews
+  });
+}
+
 async function handleClientErrorsApi(req, res) {
   if (req.method !== "POST") {
     sendText(res, 405, "Method Not Allowed");
@@ -1218,6 +1317,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/product-reviews") {
       await handleProductReviewsApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/homepage-reviews") {
+      await handleHomepageReviewsApi(req, res);
       return;
     }
 

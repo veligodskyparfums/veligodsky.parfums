@@ -9,6 +9,7 @@
   var MSK_BACKUP_NOTICE_TIMEZONE = "Europe/Moscow";
   var MSK_BACKUP_NOTICE_START_MINUTE = 15;
   var MSK_BACKUP_NOTICE_END_MINUTE = 5 * 60;
+  var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
   var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
 
   var state = {
@@ -17,6 +18,7 @@
     filteredProducts: [],
     visibleCount: 8,
     activeTab: "week",
+    homepageReviewDraft: readStoredHomepageReviewDraft(),
     reviewDrafts: readStoredProductReviewDrafts()
   };
 
@@ -37,6 +39,7 @@
       renderBrandFilter();
       renderTopSections();
       applyFilters(true);
+      restoreReviewDrafts();
       renderCart();
       setCurrentYear();
       initRevealObserver();
@@ -61,6 +64,7 @@
     renderBrandFilter();
     renderTopSections();
     applyFilters(true);
+    restoreReviewDrafts();
     renderCart();
     setCurrentYear();
     initRevealObserver();
@@ -102,6 +106,7 @@
     elements.homepageReviewsTrack = document.getElementById("homepageReviewsTrack");
     elements.homepageReviewsPrev = document.getElementById("homepageReviewsPrev");
     elements.homepageReviewsNext = document.getElementById("homepageReviewsNext");
+    elements.homepageReviewForm = document.getElementById("homepageReviewForm");
 
     elements.headerTelegramBtn = document.getElementById("headerTelegramBtn");
     elements.consultTelegramBtn = document.getElementById("consultTelegramBtn");
@@ -210,9 +215,10 @@
   }
 
   async function refreshFromServer(showErrorToast) {
+    captureHomepageReviewDraftFromDom();
     captureProductReviewDraftsFromDom();
-    if (hasProductReviewDrafts()) {
-      restoreProductReviewDrafts();
+    if (shouldPauseAutoSync()) {
+      restoreReviewDrafts();
       return;
     }
 
@@ -233,6 +239,7 @@
     renderBrandFilter();
     renderTopSections();
     applyFilters(false);
+    restoreReviewDrafts();
     renderCart();
   }
 
@@ -729,6 +736,13 @@
   }
 
   function handleDocumentSubmit(event) {
+    var homepageReviewForm = event.target.closest("[data-homepage-review-form]");
+    if (homepageReviewForm) {
+      event.preventDefault();
+      submitHomepageReviewForm(homepageReviewForm);
+      return;
+    }
+
     var reviewForm = event.target.closest("[data-product-review-form]");
     if (!reviewForm) {
       return;
@@ -739,6 +753,12 @@
   }
 
   function handleDocumentInput(event) {
+    var homepageReviewForm = event.target.closest("[data-homepage-review-form]");
+    if (homepageReviewForm) {
+      saveHomepageReviewDraft(homepageReviewForm);
+      return;
+    }
+
     var reviewForm = event.target.closest("[data-product-review-form]");
     if (!reviewForm) {
       return;
@@ -751,6 +771,31 @@
       return false;
     }
     return Boolean(document.activeElement.closest("[data-product-review-form]"));
+  }
+
+  function isEditingHomepageReviewForm() {
+    if (!document.activeElement || typeof document.activeElement.closest !== "function") {
+      return false;
+    }
+    return Boolean(document.activeElement.closest("[data-homepage-review-form]"));
+  }
+
+  function readStoredHomepageReviewDraft() {
+    try {
+      var raw = sessionStorage.getItem(HOMEPAGE_REVIEW_DRAFT_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return null;
+      }
+
+      return parsed;
+    } catch (error) {
+      return null;
+    }
   }
 
   function readStoredProductReviewDrafts() {
@@ -788,9 +833,110 @@
     return Object.keys(state.reviewDrafts).length > 0;
   }
 
+  function persistHomepageReviewDraft() {
+    try {
+      if (!hasHomepageReviewDraft()) {
+        sessionStorage.removeItem(HOMEPAGE_REVIEW_DRAFT_KEY);
+        return;
+      }
+
+      sessionStorage.setItem(HOMEPAGE_REVIEW_DRAFT_KEY, JSON.stringify(state.homepageReviewDraft));
+    } catch (error) {
+      return;
+    }
+  }
+
+  function hasHomepageReviewDraft() {
+    if (!state.homepageReviewDraft || typeof state.homepageReviewDraft !== "object") {
+      return false;
+    }
+
+    return Boolean(
+      String(state.homepageReviewDraft.author || "").trim()
+      || String(state.homepageReviewDraft.city || "").trim()
+      || String(state.homepageReviewDraft.text || "").trim()
+      || String(state.homepageReviewDraft.rating || "5") !== "5"
+    );
+  }
+
   function shouldPauseAutoSync() {
+    captureHomepageReviewDraftFromDom();
     captureProductReviewDraftsFromDom();
-    return isEditingProductReviewForm() || hasProductReviewDrafts();
+    return isEditingHomepageReviewForm()
+      || isEditingProductReviewForm()
+      || hasHomepageReviewDraft()
+      || hasProductReviewDrafts();
+  }
+
+  function saveHomepageReviewDraft(form) {
+    if (!form) {
+      return;
+    }
+
+    var authorInput = form.querySelector("[name=\"author\"]");
+    var cityInput = form.querySelector("[name=\"city\"]");
+    var textInput = form.querySelector("[name=\"text\"]");
+    var ratingInput = form.querySelector("[name=\"rating\"]");
+
+    var draft = {
+      author: authorInput ? String(authorInput.value || "") : "",
+      city: cityInput ? String(cityInput.value || "") : "",
+      text: textInput ? String(textInput.value || "") : "",
+      rating: ratingInput ? String(ratingInput.value || "5") : "5"
+    };
+
+    var isEmpty = !draft.author.trim()
+      && !draft.city.trim()
+      && !draft.text.trim()
+      && draft.rating === "5";
+
+    if (isEmpty) {
+      state.homepageReviewDraft = null;
+      persistHomepageReviewDraft();
+      return;
+    }
+
+    state.homepageReviewDraft = draft;
+    persistHomepageReviewDraft();
+  }
+
+  function captureHomepageReviewDraftFromDom() {
+    var form = document.querySelector("[data-homepage-review-form]");
+    if (!form) {
+      return;
+    }
+    saveHomepageReviewDraft(form);
+  }
+
+  function restoreHomepageReviewDraft() {
+    var form = document.querySelector("[data-homepage-review-form]");
+    var draft = state.homepageReviewDraft;
+    if (!form || !draft) {
+      return;
+    }
+
+    var authorInput = form.querySelector("[name=\"author\"]");
+    var cityInput = form.querySelector("[name=\"city\"]");
+    var textInput = form.querySelector("[name=\"text\"]");
+    var ratingInput = form.querySelector("[name=\"rating\"]");
+
+    if (authorInput) {
+      authorInput.value = draft.author || "";
+    }
+    if (cityInput) {
+      cityInput.value = draft.city || "";
+    }
+    if (textInput) {
+      textInput.value = draft.text || "";
+    }
+    if (ratingInput) {
+      ratingInput.value = draft.rating || "5";
+    }
+  }
+
+  function restoreReviewDrafts() {
+    restoreHomepageReviewDraft();
+    restoreProductReviewDrafts();
   }
 
   function saveProductReviewDraft(form) {
@@ -946,6 +1092,85 @@
 
       if (message.indexOf("PRODUCT_NOT_FOUND") >= 0) {
         showToast("Товар не найден. Обновите страницу.", true);
+        return;
+      }
+
+      showToast("Не удалось отправить отзыв. Попробуйте позже.", true);
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+      }
+    }
+  }
+
+  async function submitHomepageReviewForm(form) {
+    if (!form) {
+      return;
+    }
+
+    if (typeof store.submitHomepageReview !== "function") {
+      showToast("Отправка отзывов временно недоступна.", true);
+      return;
+    }
+
+    var formData = new FormData(form);
+    var author = String(formData.get("author") || "").trim();
+    var city = String(formData.get("city") || "").trim();
+    var text = String(formData.get("text") || "").trim();
+    var rating = Math.max(1, Math.min(5, Math.round(Number(formData.get("rating")) || 5)));
+
+    if (!author || author.length < 2) {
+      showToast("Укажите имя для отзыва.", true);
+      return;
+    }
+
+    if (!text || text.length < 6) {
+      showToast("Текст отзыва должен быть не короче 6 символов.", true);
+      return;
+    }
+
+    var submitButton = form.querySelector("[type=\"submit\"]");
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+
+    try {
+      await store.submitHomepageReview({
+        author: author,
+        city: city,
+        text: text,
+        rating: rating
+      });
+
+      state.homepageReviewDraft = null;
+      persistHomepageReviewDraft();
+      state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
+      renderHomepageReviews();
+
+      form.reset();
+      var ratingSelect = form.querySelector("select[name=\"rating\"]");
+      if (ratingSelect) {
+        ratingSelect.value = "5";
+      }
+
+      showToast("Спасибо! Отзыв добавлен на главную.");
+      trackEvent("homepage_review_submit", {
+        rating: rating
+      });
+    } catch (error) {
+      var message = String(error && error.message || "");
+      if (message.indexOf("REVIEW_RATE_LIMIT:") === 0) {
+        var waitSeconds = Math.max(0, Math.round(Number(message.split(":")[1]) || 0));
+        if (waitSeconds > 0) {
+          showToast("Слишком часто отправляете отзывы. Подождите " + waitSeconds + " сек.", true);
+        } else {
+          showToast("Слишком часто отправляете отзывы. Попробуйте чуть позже.", true);
+        }
+        return;
+      }
+
+      if (message.indexOf("INVALID_REVIEW_PAYLOAD:") === 0) {
+        showToast("Проверьте имя, оценку и текст отзыва.", true);
         return;
       }
 
