@@ -185,104 +185,115 @@
     </section>
     <section class="reviews section" id="reviews">
       <div class="container">
-        <div class="section-heading reveal">
+        <div class="section-heading reviews-heading reveal">
           <h2>Отзывы клиентов</h2>
-        </div>
-
-        <div class="reviews-carousel reveal">
           <button
-            class="reviews-nav"
-            id="homepageReviewsPrev"
+            class="btn btn-ghost reviews-toggle-btn"
+            id="reviewsToggleBtn"
             type="button"
-            data-reviews-nav="prev"
-            aria-label="Прокрутить отзывы назад"
+            aria-controls="reviewsContent"
+            aria-expanded="true"
           >
-            &#8592;
-          </button>
-          <div class="reviews-track" id="homepageReviewsTrack" aria-live="polite"></div>
-          <button
-            class="reviews-nav"
-            id="homepageReviewsNext"
-            type="button"
-            data-reviews-nav="next"
-            aria-label="Прокрутить отзывы вперед"
-          >
-            &#8594;
+            Свернуть раздел
           </button>
         </div>
 
-        <div class="reviews-feedback reveal">
-          <div class="reviews-feedback-card">
-            <div class="reviews-feedback-head">
-              <h3>Оставить отзыв</h3>
-              <p>Поделитесь впечатлением о покупке и сервисе. Ваш отзыв появится в этом блоке сразу после отправки.</p>
-            </div>
+        <div class="reviews-content" id="reviewsContent">
+          <div class="reviews-carousel reveal">
+            <button
+              class="reviews-nav"
+              id="homepageReviewsPrev"
+              type="button"
+              data-reviews-nav="prev"
+              aria-label="Прокрутить отзывы назад"
+            >
+              &#8592;
+            </button>
+            <div class="reviews-track" id="homepageReviewsTrack" aria-live="polite"></div>
+            <button
+              class="reviews-nav"
+              id="homepageReviewsNext"
+              type="button"
+              data-reviews-nav="next"
+              aria-label="Прокрутить отзывы вперед"
+            >
+              &#8594;
+            </button>
+          </div>
 
-            <form class="reviews-feedback-form" id="homepageReviewForm" data-homepage-review-form>
-              <div class="reviews-feedback-row">
-                <input
-                  type="text"
-                  name="author"
-                  maxlength="80"
-                  minlength="2"
-                  placeholder="Ваше имя"
-                  autocomplete="name"
-                  required
-                >
-                <input
-                  type="text"
-                  name="city"
-                  maxlength="80"
-                  placeholder="Город"
-                  autocomplete="address-level2"
-                >
-                <select name="rating" aria-label="Оценка">
-                  <option value="5">5 ★★★★★</option>
-                  <option value="4">4 ★★★★☆</option>
-                  <option value="3">3 ★★★☆☆</option>
-                  <option value="2">2 ★★☆☆☆</option>
-                  <option value="1">1 ★☆☆☆☆</option>
-                </select>
+          <div class="reviews-feedback reveal">
+            <div class="reviews-feedback-card">
+              <div class="reviews-feedback-head">
+                <h3>Оставить отзыв</h3>
+                <p>Поделитесь впечатлением о покупке и сервисе. Отзыв будет опубликован после модерации.</p>
               </div>
 
-              <textarea
-                name="text"
-                rows="4"
-                maxlength="500"
-                minlength="6"
-                placeholder="Напишите, что вам понравилось: подбор аромата, упаковка, скорость доставки, консультация и т.д."
-                required
-              ></textarea>
-
-                <div class="review-form-extras">
-                  <label class="review-upload-field">
-                  <span>Фото к отзыву (необязательно)</span>
-                  <input type="file" accept="image/*" data-review-photo-input>
-                </label>
-
-                <div class="review-photo-preview hidden" data-review-photo-preview-wrap>
-                  <img class="review-photo-preview-image" data-review-photo-preview alt="Предпросмотр фото к отзыву">
-                  <button class="btn btn-ghost" type="button" data-review-photo-remove>Убрать фото</button>
+              <form class="reviews-feedback-form" id="homepageReviewForm" data-homepage-review-form>
+                <div class="reviews-feedback-row">
+                  <input
+                    type="text"
+                    name="author"
+                    maxlength="80"
+                    minlength="2"
+                    placeholder="Ваше имя"
+                    autocomplete="name"
+                    required
+                  >
+                  <input
+                    type="text"
+                    name="city"
+                    maxlength="80"
+                    placeholder="Город"
+                    autocomplete="address-level2"
+                  >
+                  <select name="rating" aria-label="Оценка">
+                    <option value="5">5 ★★★★★</option>
+                    <option value="4">4 ★★★★☆</option>
+                    <option value="3">3 ★★★☆☆</option>
+                    <option value="2">2 ★★☆☆☆</option>
+                    <option value="1">1 ★☆☆☆☆</option>
+                  </select>
                 </div>
 
-                <input type="hidden" name="photo" value="">
-                <input class="review-honeypot" type="text" name="website" tabindex="-1" autocomplete="off">
-                <input type="hidden" name="captchaToken" value="">
+                <textarea
+                  name="text"
+                  rows="4"
+                  maxlength="500"
+                  minlength="6"
+                  placeholder="Напишите, что вам понравилось: подбор аромата, упаковка, скорость доставки, консультация и т.д."
+                  required
+                ></textarea>
 
-                <div class="review-captcha">
-                  <span class="review-captcha-prompt" data-captcha-prompt>Загружаем капчу...</span>
-                  <div class="review-captcha-actions">
-                    <input type="text" name="captchaAnswer" inputmode="numeric" placeholder="Ответ" required>
-                    <button class="btn btn-ghost" type="button" data-captcha-refresh>Обновить</button>
+                  <div class="review-form-extras">
+                    <label class="review-upload-field">
+                    <span>Фото к отзыву (необязательно)</span>
+                    <input type="file" accept="image/*" data-review-photo-input>
+                  </label>
+
+                  <div class="review-photo-preview hidden" data-review-photo-preview-wrap>
+                    <img class="review-photo-preview-image" data-review-photo-preview alt="Предпросмотр фото к отзыву">
+                    <button class="btn btn-ghost" type="button" data-review-photo-remove>Убрать фото</button>
+                  </div>
+
+                  <input type="hidden" name="photo" value="">
+                  <input class="review-honeypot" type="text" name="website" tabindex="-1" autocomplete="off">
+                  <input type="hidden" name="captchaToken" value="">
+
+                  <div class="review-captcha">
+                    <span class="review-captcha-prompt" data-captcha-prompt>Загружаем капчу...</span>
+                    <div class="review-captcha-actions">
+                      <input type="text" name="captchaAnswer" inputmode="numeric" placeholder="Ответ" required>
+                      <button class="btn btn-ghost" type="button" data-captcha-refresh>Обновить</button>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div class="reviews-feedback-actions">
-                <button class="btn btn-primary" type="submit">Отправить отзыв</button>
-                <span class="reviews-feedback-note">Можно оставить отзыв без регистрации. Публикация после модерации.</span>
-              </div>
-            </form>
+                <div class="reviews-feedback-actions">
+                  <button class="btn btn-primary" type="submit">Отправить отзыв</button>
+                  <span class="reviews-feedback-note">Можно оставить отзыв без регистрации. Публикация после модерации.</span>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       </div>

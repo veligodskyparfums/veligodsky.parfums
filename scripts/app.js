@@ -15,6 +15,7 @@
   var REVIEW_IMAGE_QUALITY_START = 0.82;
   var REVIEW_IMAGE_QUALITY_MIN = 0.55;
   var REVIEW_SYNC_PAUSE_AFTER_INTERACTION_MS = 10 * 60 * 1000;
+  var REVIEWS_COLLAPSED_KEY = "veligodsky_reviews_collapsed_v1";
   var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
   var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
 
@@ -25,6 +26,7 @@
     visibleCount: 8,
     activeTab: "week",
     lastReviewInteractionAt: 0,
+    productReviewPanels: {},
     homepageReviewDraft: readStoredHomepageReviewDraft(),
     reviewDrafts: readStoredProductReviewDrafts()
   };
@@ -113,6 +115,8 @@
     elements.homepageReviewsTrack = document.getElementById("homepageReviewsTrack");
     elements.homepageReviewsPrev = document.getElementById("homepageReviewsPrev");
     elements.homepageReviewsNext = document.getElementById("homepageReviewsNext");
+    elements.reviewsToggleBtn = document.getElementById("reviewsToggleBtn");
+    elements.reviewsContent = document.getElementById("reviewsContent");
     elements.homepageReviewForm = document.getElementById("homepageReviewForm");
 
     elements.headerTelegramBtn = document.getElementById("headerTelegramBtn");
@@ -206,6 +210,11 @@
       elements.homepageReviewsTrack.addEventListener("scroll", updateHomepageReviewsNavState);
     }
 
+    if (elements.reviewsToggleBtn) {
+      elements.reviewsToggleBtn.addEventListener("click", toggleReviewsSection);
+      applyReviewsCollapsedState(readReviewsCollapsedState(), false);
+    }
+
     document.addEventListener("click", handleDocumentClick);
     document.addEventListener("focusin", handleDocumentFocusIn);
     document.addEventListener("input", handleDocumentInput);
@@ -224,6 +233,95 @@
     if (elements.homepageReviewForm) {
       ensureReviewCaptcha(elements.homepageReviewForm);
     }
+  }
+
+  function readReviewsCollapsedState() {
+    try {
+      return localStorage.getItem(REVIEWS_COLLAPSED_KEY) === "1";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function writeReviewsCollapsedState(collapsed) {
+    try {
+      localStorage.setItem(REVIEWS_COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch (error) {
+      return;
+    }
+  }
+
+  function setCollapsibleExpanded(content, expanded, animate) {
+    if (!content) {
+      return;
+    }
+
+    var shouldExpand = Boolean(expanded);
+    var shouldAnimate = animate !== false;
+
+    if (!shouldAnimate) {
+      content.classList.toggle("is-collapsed", !shouldExpand);
+      content.setAttribute("aria-hidden", shouldExpand ? "false" : "true");
+      content.style.maxHeight = shouldExpand ? "none" : "0px";
+      return;
+    }
+
+    if (content._collapseTransitionHandler) {
+      content.removeEventListener("transitionend", content._collapseTransitionHandler);
+      content._collapseTransitionHandler = null;
+    }
+
+    if (shouldExpand) {
+      content.classList.remove("is-collapsed");
+      content.setAttribute("aria-hidden", "false");
+      content.style.maxHeight = "0px";
+      content.offsetHeight;
+      content.style.maxHeight = Math.max(0, content.scrollHeight) + "px";
+
+      var openHandler = function (event) {
+        if (event.target !== content || event.propertyName !== "max-height") {
+          return;
+        }
+        content.style.maxHeight = "none";
+        content.removeEventListener("transitionend", openHandler);
+        content._collapseTransitionHandler = null;
+      };
+
+      content._collapseTransitionHandler = openHandler;
+      content.addEventListener("transitionend", openHandler);
+      return;
+    }
+
+    content.style.maxHeight = Math.max(0, content.scrollHeight) + "px";
+    content.offsetHeight;
+    content.classList.add("is-collapsed");
+    content.setAttribute("aria-hidden", "true");
+    content.style.maxHeight = "0px";
+  }
+
+  function applyReviewsCollapsedState(collapsed, animate) {
+    if (!elements.reviewsContent || !elements.reviewsToggleBtn) {
+      return;
+    }
+
+    var isCollapsed = Boolean(collapsed);
+    setCollapsibleExpanded(elements.reviewsContent, !isCollapsed, animate);
+    elements.reviewsToggleBtn.setAttribute("aria-expanded", String(!isCollapsed));
+    elements.reviewsToggleBtn.textContent = isCollapsed ? "Развернуть раздел" : "Свернуть раздел";
+
+    if (!isCollapsed) {
+      window.requestAnimationFrame(updateHomepageReviewsNavState);
+    }
+  }
+
+  function toggleReviewsSection() {
+    if (!elements.reviewsContent) {
+      return;
+    }
+
+    var nextCollapsed = !elements.reviewsContent.classList.contains("is-collapsed");
+    applyReviewsCollapsedState(nextCollapsed);
+    writeReviewsCollapsedState(nextCollapsed);
   }
 
   async function refreshFromServer(showErrorToast) {
@@ -618,6 +716,7 @@
 
     var hasMore = state.visibleCount < state.filteredProducts.length;
     elements.showMoreBtn.classList.toggle("hidden", !hasMore);
+    initProductReviewSections();
     restoreProductReviewDrafts();
     observeRevealElements();
   }
@@ -667,8 +766,59 @@
       + "</article>";
   }
 
+  function updateProductReviewToggleButton(section, expanded) {
+    if (!section) {
+      return;
+    }
+    var toggleButton = section.querySelector("[data-product-reviews-toggle]");
+    if (!toggleButton) {
+      return;
+    }
+
+    toggleButton.setAttribute("aria-expanded", String(Boolean(expanded)));
+    toggleButton.textContent = expanded ? "Свернуть" : "Развернуть";
+  }
+
+  function applyProductReviewSectionState(section, expanded, animate) {
+    if (!section) {
+      return;
+    }
+    var content = section.querySelector("[data-product-reviews-content]");
+    if (!content) {
+      return;
+    }
+
+    setCollapsibleExpanded(content, Boolean(expanded), animate);
+    updateProductReviewToggleButton(section, expanded);
+  }
+
+  function toggleProductReviewSection(section) {
+    if (!section) {
+      return;
+    }
+    var content = section.querySelector("[data-product-reviews-content]");
+    if (!content) {
+      return;
+    }
+
+    var productId = String(section.getAttribute("data-product-id") || "").trim();
+    var nextExpanded = content.classList.contains("is-collapsed");
+    applyProductReviewSectionState(section, nextExpanded, true);
+    setProductReviewPanelState(productId, nextExpanded);
+  }
+
+  function initProductReviewSections() {
+    var sections = document.querySelectorAll(".product-reviews");
+    sections.forEach(function (section) {
+      var productId = String(section.getAttribute("data-product-id") || "").trim();
+      var expanded = isProductReviewPanelExpanded(productId);
+      applyProductReviewSectionState(section, expanded, false);
+    });
+  }
+
   function buildProductReviewsBlock(product) {
     var reviews = Array.isArray(product.reviews) ? product.reviews : [];
+    var isExpanded = isProductReviewPanelExpanded(product.id);
     var reviewsHtml = "";
 
     if (!reviews.length) {
@@ -694,11 +844,15 @@
     }
 
     return ""
-      + "<section class=\"product-reviews\">"
+      + "<section class=\"product-reviews\" data-product-id=\"" + escapeHtml(product.id) + "\">"
       + "  <div class=\"product-reviews-head\">"
       + "    <strong>Отзывы покупателей</strong>"
-      + "    <span>Всего: " + reviews.length + "</span>"
+      + "    <div class=\"product-reviews-head-right\">"
+      + "      <span>Всего: " + reviews.length + "</span>"
+      + "      <button class=\"btn btn-ghost product-reviews-toggle\" type=\"button\" data-product-reviews-toggle aria-expanded=\"" + (isExpanded ? "true" : "false") + "\">" + (isExpanded ? "Свернуть" : "Развернуть") + "</button>"
+      + "    </div>"
       + "  </div>"
+      + "  <div class=\"product-reviews-content" + (isExpanded ? "" : " is-collapsed") + "\" data-product-reviews-content aria-hidden=\"" + (isExpanded ? "false" : "true") + "\">"
       + "  <div class=\"product-reviews-list\">"
       + reviewsHtml
       + "  </div>"
@@ -740,10 +894,20 @@
       + "      <button class=\"btn btn-outline product-review-submit\" type=\"submit\">Отправить отзыв</button>"
       + "    </div>"
       + "  </form>"
+      + "  </div>"
       + "</section>";
   }
 
   function handleDocumentClick(event) {
+    var productReviewsToggle = event.target.closest("[data-product-reviews-toggle]");
+    if (productReviewsToggle) {
+      var productReviewsSection = productReviewsToggle.closest(".product-reviews");
+      if (productReviewsSection) {
+        toggleProductReviewSection(productReviewsSection);
+      }
+      return;
+    }
+
     var captchaRefreshButton = event.target.closest("[data-captcha-refresh]");
     if (captchaRefreshButton) {
       var captchaForm = captchaRefreshButton.closest("[data-homepage-review-form], [data-product-review-form]");
@@ -890,6 +1054,27 @@
       return parsed;
     } catch (error) {
       return null;
+    }
+  }
+
+  function isProductReviewPanelExpanded(productId) {
+    return Boolean(state.productReviewPanels && state.productReviewPanels[String(productId || "")]);
+  }
+
+  function setProductReviewPanelState(productId, expanded) {
+    var safeId = String(productId || "").trim();
+    if (!safeId) {
+      return;
+    }
+
+    if (!state.productReviewPanels || typeof state.productReviewPanels !== "object") {
+      state.productReviewPanels = {};
+    }
+
+    if (expanded) {
+      state.productReviewPanels[safeId] = true;
+    } else {
+      delete state.productReviewPanels[safeId];
     }
   }
 
@@ -1335,6 +1520,11 @@
         photoInput.value = draft.photo || "";
       }
       syncReviewPhotoPreview(form, draft.photo || "");
+      var reviewsSection = form.closest(".product-reviews");
+      if (reviewsSection) {
+        applyProductReviewSectionState(reviewsSection, true, false);
+      }
+      setProductReviewPanelState(productId, true);
       ensureReviewCaptcha(form);
     });
   }
