@@ -29,7 +29,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     init().catch(function () {
       openLogin();
-      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РґР°РЅРЅС‹Рµ СЃРµСЂРІРµСЂР°. РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕРґРєР»СЋС‡РµРЅРёРµ.", true);
+      showToast("Не удалось загрузить данные сервера. Проверьте подключение.", true);
     });
   });
 
@@ -202,11 +202,11 @@
       } catch (error) {
         if (String(error && error.message || "").indexOf("401") >= 0) {
           logout();
-          showToast("РЎРµСЃСЃРёСЏ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР° РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.", true);
+          showToast("Сессия администратора истекла. Войдите снова.", true);
           return;
         }
         if (showErrorToast) {
-          showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РґР°РЅРЅС‹Рµ СЃ СЃРµСЂРІРµСЂР°.", true);
+          showToast("Не удалось обновить данные с сервера.", true);
         }
       }
     }
@@ -217,12 +217,12 @@
     event.preventDefault();
     var inputPassword = String(elements.passwordInput.value || "").trim();
     if (!inputPassword) {
-      showToast("Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ.", true);
+      showToast("Введите пароль.", true);
       return;
     }
 
     if (typeof store.loginAdmin !== "function") {
-      showToast("РћР±РЅРѕРІРёС‚Рµ scripts/common.js РЅР° СЃРµСЂРІРµСЂРµ.", true);
+      showToast("Обновите scripts/common.js на сервере.", true);
       return;
     }
 
@@ -232,27 +232,27 @@
       if (String(error && error.message || "").indexOf("ADMIN_LOGIN_TEMP_BLOCKED:") === 0) {
         var waitSeconds = Math.max(0, Math.round(Number(String(error.message).split(":")[1]) || 0));
         if (waitSeconds > 0) {
-          showToast("РЎР»РёС€РєРѕРј РјРЅРѕРіРѕ РїРѕРїС‹С‚РѕРє РІС…РѕРґР°. РџРѕРґРѕР¶РґРёС‚Рµ " + waitSeconds + " СЃРµРє.", true);
+          showToast("Слишком много попыток входа. Подождите " + waitSeconds + " сек.", true);
         } else {
-          showToast("РЎР»РёС€РєРѕРј РјРЅРѕРіРѕ РїРѕРїС‹С‚РѕРє РІС…РѕРґР°. РџРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.", true);
+          showToast("Слишком много попыток входа. Попробуйте позже.", true);
         }
         return;
       }
       if (String(error && error.message || "").indexOf("INVALID_CREDENTIALS") >= 0) {
-        showToast("РќРµРІРµСЂРЅС‹Р№ РїР°СЂРѕР»СЊ.", true);
+        showToast("Неверный пароль.", true);
         return;
       }
       if (String(error && error.message || "").indexOf("HTTP") >= 0) {
-        showToast("РЎРµСЂРІРµСЂ РІС…РѕРґР° РЅРµРґРѕСЃС‚СѓРїРµРЅ. РџСЂРѕРІРµСЂСЊС‚Рµ РґРµРїР»РѕР№.", true);
+        showToast("Сервер входа недоступен. Проверьте деплой.", true);
         return;
       }
-      showToast("РќРµРІРµСЂРЅС‹Р№ РїР°СЂРѕР»СЊ.", true);
+      showToast("Неверный пароль.", true);
       return;
     }
 
     sessionStorage.setItem(AUTH_KEY, "1");
     openPanel();
-    showToast("Р’С…РѕРґ РІС‹РїРѕР»РЅРµРЅ");
+    showToast("Вход выполнен");
   }
 
   function logout() {
@@ -303,14 +303,14 @@
       }
 
       elements.adminPasswordNewInput.value = "";
-      showToast(newAdminPassword ? "РќР°СЃС‚СЂРѕР№РєРё Рё РїР°СЂРѕР»СЊ СЃРѕС…СЂР°РЅРµРЅС‹" : "РќР°СЃС‚СЂРѕР№РєРё СЃРѕС…СЂР°РЅРµРЅС‹");
+      showToast(newAdminPassword ? "Настройки и пароль сохранены" : "Настройки сохранены");
     } catch (error) {
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
         logout();
-        showToast("РЎРµСЃСЃРёСЏ РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.", true);
+        showToast("Сессия истекла. Войдите снова.", true);
         return;
       }
-      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РЅР° СЃРµСЂРІРµСЂ.", true);
+      showToast("Не удалось сохранить настройки на сервер.", true);
     }
   }
 
@@ -320,14 +320,14 @@
     row.className = "volume-row";
     row.innerHTML = ""
       + "<label class=\"field\">"
-      + "  <span>РћР±СЉС‘Рј, ml</span>"
+      + "  <span>Объём, ml</span>"
       + "  <input class=\"volume-ml\" type=\"number\" min=\"1\" required value=\"" + escapeHtml(data.ml) + "\">"
       + "</label>"
       + "<label class=\"field\">"
-      + "  <span>Р¦РµРЅР°, в‚Ѕ</span>"
+      + "  <span>Цена, ₽</span>"
       + "  <input class=\"volume-price\" type=\"number\" min=\"1\" required value=\"" + escapeHtml(data.price) + "\">"
       + "</label>"
-      + "<button type=\"button\" class=\"btn btn-ghost remove-volume-btn\">РЈРґР°Р»РёС‚СЊ</button>";
+      + "<button type=\"button\" class=\"btn btn-ghost remove-volume-btn\">Удалить</button>";
 
     return row;
   }
@@ -556,7 +556,7 @@
     state.editingId = String(draft.editingId || "") || null;
     state.imageData = String(draft.imageData || "");
 
-    elements.editorTitle.textContent = state.editingId ? "Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ РїР°СЂС„СЋРј" : "Р”РѕР±Р°РІРёС‚СЊ РїР°СЂС„СЋРј";
+    elements.editorTitle.textContent = state.editingId ? "Редактировать парфюм" : "Добавить парфюм";
     elements.perfumeIdInput.value = state.editingId || "";
     elements.perfumeNameInput.value = String(draft.name || "");
     elements.perfumeBrandInput.value = String(draft.brand || "");
@@ -679,19 +679,19 @@
 
     var fileType = String(file.type || "").toLowerCase();
     if (!String(fileType).startsWith("image/")) {
-      showToast("Р’С‹Р±РµСЂРёС‚Рµ С„Р°Р№Р» РёР·РѕР±СЂР°Р¶РµРЅРёСЏ.", true);
+      showToast("Выберите файл изображения.", true);
       elements.perfumeImageInput.value = "";
       return;
     }
 
     if (fileType.indexOf("heic") >= 0 || fileType.indexOf("heif") >= 0) {
-      showToast("Р¤РѕСЂРјР°С‚ HEIC/HEIF РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ. РЎРѕС…СЂР°РЅРёС‚Рµ С„РѕС‚Рѕ РєР°Рє JPG/PNG.", true);
+      showToast("Формат HEIC/HEIF не поддерживается. Сохраните фото как JPG/PNG.", true);
       elements.perfumeImageInput.value = "";
       return;
     }
 
     if (file.size > MAX_UPLOAD_FILE_SIZE) {
-      showToast("Р¤РѕС‚Рѕ Р±РѕР»СЊС€Рµ 12 РњР‘. Р’С‹Р±РµСЂРёС‚Рµ С„Р°Р№Р» РїРѕРјРµРЅСЊС€Рµ.", true);
+      showToast("Фото больше 12 МБ. Выберите файл поменьше.", true);
       elements.perfumeImageInput.value = "";
       return;
     }
@@ -706,17 +706,17 @@
       state.imageData = optimized;
       setPreviewImage(state.imageData);
       saveEditorDraftFromForm();
-      showToast("Р¤РѕС‚Рѕ Р·Р°РіСЂСѓР¶РµРЅРѕ");
+      showToast("Фото загружено");
     } catch (error) {
       state.imageData = previousImageData;
       setPreviewImage(previousImageData);
       elements.perfumeImageInput.value = "";
       saveEditorDraftFromForm();
       if (error && error.message === "IMAGE_TOO_LARGE") {
-        showToast("Р¤РѕС‚Рѕ СЃР»РёС€РєРѕРј С‚СЏР¶РµР»РѕРµ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РґСЂСѓРіРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ.", true);
+        showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
         return;
       }
-      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ С„РѕС‚Рѕ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ JPG РёР»Рё PNG.", true);
+      showToast("Не удалось обработать фото. Используйте JPG или PNG.", true);
     }
   }
 
@@ -742,12 +742,12 @@
     var volumes = collectVolumes();
 
     if (!name || !brand) {
-      showToast("Р—Р°РїРѕР»РЅРёС‚Рµ РЅР°Р·РІР°РЅРёРµ Рё Р±СЂРµРЅРґ.", true);
+      showToast("Заполните название и бренд.", true);
       return;
     }
 
     if (!volumes.length) {
-      showToast("Р”РѕР±Р°РІСЊС‚Рµ С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ РѕР±СЉС‘Рј Рё С†РµРЅСѓ.", true);
+      showToast("Добавьте хотя бы один объём и цену.", true);
       return;
     }
 
@@ -758,7 +758,7 @@
 
     var image = state.imageData || (existing && existing.image) || store.getDefaultData().products[0].image;
     if (String(image).indexOf("data:image/") === 0 && String(image).length > MAX_IMAGE_DATA_LENGTH) {
-      showToast("РЎР»РёС€РєРѕРј С‚СЏР¶РµР»РѕРµ С„РѕС‚Рѕ. Р’С‹Р±РµСЂРёС‚Рµ РґСЂСѓРіРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ.", true);
+      showToast("Слишком тяжелое фото. Выберите другое изображение.", true);
       return;
     }
 
@@ -781,21 +781,21 @@
           return item.id === existing.id ? payload : item;
         });
         await store.saveProducts(next);
-        showToast("РўРѕРІР°СЂ РѕР±РЅРѕРІР»С‘РЅ");
+        showToast("Товар обновлён");
       } else {
         products.unshift(payload);
         await store.saveProducts(products);
-        showToast("РўРѕРІР°СЂ РґРѕР±Р°РІР»РµРЅ");
+        showToast("Товар добавлен");
       }
 
       renderProducts();
       resetEditor();
     } catch (error) {
       if (String(error && error.message || "").indexOf("413") >= 0) {
-        showToast("Р¤РѕС‚Рѕ СЃР»РёС€РєРѕРј С‚СЏР¶РµР»РѕРµ РґР»СЏ СЃРµСЂРІРµСЂР°. РЈРјРµРЅСЊС€РёС‚Рµ СЂР°Р·РјРµСЂ.", true);
+        showToast("Фото слишком тяжелое для сервера. Уменьшите размер.", true);
         return;
       }
-      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ С‚РѕРІР°СЂ РЅР° СЃРµСЂРІРµСЂ.", true);
+      showToast("Не удалось сохранить товар на сервер.", true);
     }
   }
 
@@ -805,7 +805,7 @@
     state.editingId = null;
     state.imageData = "";
 
-    elements.editorTitle.textContent = "Р”РѕР±Р°РІРёС‚СЊ РїР°СЂС„СЋРј";
+    elements.editorTitle.textContent = "Добавить парфюм";
     elements.perfumeIdInput.value = "";
     elements.perfumeForm.reset();
 
@@ -831,7 +831,7 @@
     state.editingId = product.id;
     state.imageData = product.image;
 
-    elements.editorTitle.textContent = "Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ РїР°СЂС„СЋРј";
+    elements.editorTitle.textContent = "Редактировать парфюм";
     elements.perfumeIdInput.value = product.id;
     elements.perfumeNameInput.value = product.name;
     elements.perfumeBrandInput.value = product.brand;
@@ -862,7 +862,7 @@
       return;
     }
 
-    var ok = window.confirm("РЈРґР°Р»РёС‚СЊ Р°СЂРѕРјР°С‚ \"" + target.name + "\"?");
+    var ok = window.confirm("Удалить аромат \"" + target.name + "\"?");
     if (!ok) {
       return;
     }
@@ -880,13 +880,13 @@
       store.saveCart(cart);
 
       renderProducts();
-      showToast("РўРѕРІР°СЂ СѓРґР°Р»С‘РЅ");
+      showToast("Товар удалён");
 
       if (state.editingId === productId) {
         resetEditor();
       }
     } catch (error) {
-      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ С‚РѕРІР°СЂ РЅР° СЃРµСЂРІРµСЂРµ.", true);
+      showToast("Не удалось удалить товар на сервере.", true);
     }
   }
 
@@ -976,9 +976,9 @@
 
     try {
       await store.saveProducts(next);
-      showToast("РўРѕРї-СЃС‚Р°С‚СѓСЃ РѕР±РЅРѕРІР»С‘РЅ");
+      showToast("Топ-статус обновлён");
     } catch (error) {
-      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ С‚РѕРї-СЃС‚Р°С‚СѓСЃ РЅР° СЃРµСЂРІРµСЂРµ.", true);
+      showToast("Не удалось обновить топ-статус на сервере.", true);
       toggle.checked = !checked;
     }
   }
@@ -1036,7 +1036,7 @@
   async function approvePendingProductReview(productId, reviewId) {
     var entry = findPendingProductReviewEntry(productId, reviewId);
     if (!entry) {
-      showToast("Р С›РЎвЂљР В·РЎвЂ№Р Р† Р Р…Р В° Р СР С•Р Т‘Р ВµРЎР‚Р В°РЎвЂ Р С‘Р С‘ Р Р…Р Вµ Р Р…Р В°Р в„–Р Т‘Р ВµР Р….", true);
+      showToast("Отзыв на модерации не найден.", true);
       return;
     }
 
@@ -1062,20 +1062,20 @@
     try {
       await store.saveProducts(nextProducts);
       renderProducts();
-      showToast("Р С›РЎвЂљР В·РЎвЂ№Р Р† Р С•Р С—РЎС“Р В±Р В»Р С‘Р С”Р С•Р Р†Р В°Р Р….");
+      showToast("Отзыв опубликован.");
     } catch (error) {
-      showToast("Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р С•Р С—РЎС“Р В±Р В»Р С‘Р С”Р С•Р Р†Р В°РЎвЂљРЎРЉ Р С•РЎвЂљР В·РЎвЂ№Р Р†.", true);
+      showToast("Не удалось опубликовать отзыв.", true);
     }
   }
 
   async function rejectPendingProductReview(productId, reviewId) {
     var entry = findPendingProductReviewEntry(productId, reviewId);
     if (!entry) {
-      showToast("Р С›РЎвЂљР В·РЎвЂ№Р Р† Р Р…Р В° Р СР С•Р Т‘Р ВµРЎР‚Р В°РЎвЂ Р С‘Р С‘ Р Р…Р Вµ Р Р…Р В°Р в„–Р Т‘Р ВµР Р….", true);
+      showToast("Отзыв на модерации не найден.", true);
       return;
     }
 
-    var ok = window.confirm("Р С›РЎвЂљР С”Р В»Р С•Р Р…Р С‘РЎвЂљРЎРЉ Р С•РЎвЂљР В·РЎвЂ№Р Р† \"" + entry.review.author + "\" Р Т‘Р В»РЎРЏ Р В°РЎР‚Р С•Р СР В°РЎвЂљР В° \"" + entry.product.name + "\"?");
+    var ok = window.confirm("Отклонить отзыв \"" + entry.review.author + "\" для аромата \"" + entry.product.name + "\"?");
     if (!ok) {
       return;
     }
@@ -1096,37 +1096,37 @@
     try {
       await store.saveProducts(nextProducts);
       renderProducts();
-      showToast("Р С›РЎвЂљР В·РЎвЂ№Р Р† Р С•РЎвЂљР С”Р В»Р С•Р Р…РЎвЂР Р….");
+      showToast("Отзыв отклонён.");
     } catch (error) {
-      showToast("Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р С•РЎвЂљР С”Р В»Р С•Р Р…Р С‘РЎвЂљРЎРЉ Р С•РЎвЂљР В·РЎвЂ№Р Р†.", true);
+      showToast("Не удалось отклонить отзыв.", true);
     }
   }
 
   async function editProductReview(productId, reviewId) {
     var entry = findProductReviewEntry(productId, reviewId);
     if (!entry) {
-      showToast("РћС‚Р·С‹РІ РЅРµ РЅР°Р№РґРµРЅ.", true);
+      showToast("Отзыв не найден.", true);
       return;
     }
 
-    var nextAuthor = window.prompt("РРјСЏ Р°РІС‚РѕСЂР°:", String(entry.review.author || ""));
+    var nextAuthor = window.prompt("Имя автора:", String(entry.review.author || ""));
     if (nextAuthor === null) {
       return;
     }
     nextAuthor = String(nextAuthor || "").trim();
     if (!nextAuthor || nextAuthor.length < 2) {
-      showToast("РРјСЏ Р°РІС‚РѕСЂР° РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ РЅРµ РєРѕСЂРѕС‡Рµ 2 СЃРёРјРІРѕР»РѕРІ.", true);
+      showToast("Имя автора должно быть не короче 2 символов.", true);
       return;
     }
 
-    var nextCity = window.prompt("Р“РѕСЂРѕРґ (РјРѕР¶РЅРѕ РѕСЃС‚Р°РІРёС‚СЊ РїСѓСЃС‚С‹Рј):", String(entry.review.city || ""));
+    var nextCity = window.prompt("Город (можно оставить пустым):", String(entry.review.city || ""));
     if (nextCity === null) {
       return;
     }
     nextCity = String(nextCity || "").trim();
 
     var nextRatingRaw = window.prompt(
-      "РћС†РµРЅРєР° РѕС‚ 1 РґРѕ 5:",
+      "Оценка от 1 до 5:",
       String(Math.max(1, Math.min(5, Math.round(Number(entry.review.rating) || 5))))
     );
     if (nextRatingRaw === null) {
@@ -1135,18 +1135,18 @@
 
     var parsedRating = Number(nextRatingRaw);
     if (!Number.isFinite(parsedRating)) {
-      showToast("РћС†РµРЅРєР° РґРѕР»Р¶РЅР° Р±С‹С‚СЊ С‡РёСЃР»РѕРј РѕС‚ 1 РґРѕ 5.", true);
+      showToast("Оценка должна быть числом от 1 до 5.", true);
       return;
     }
 
     var nextRating = Math.max(1, Math.min(5, Math.round(parsedRating)));
-    var nextText = window.prompt("РўРµРєСЃС‚ РѕС‚Р·С‹РІР°:", String(entry.review.text || ""));
+    var nextText = window.prompt("Текст отзыва:", String(entry.review.text || ""));
     if (nextText === null) {
       return;
     }
     nextText = String(nextText || "").trim();
     if (!nextText || nextText.length < 6) {
-      showToast("РўРµРєСЃС‚ РѕС‚Р·С‹РІР° РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РЅРµ РєРѕСЂРѕС‡Рµ 6 СЃРёРјРІРѕР»РѕРІ.", true);
+      showToast("Текст отзыва должен быть не короче 6 символов.", true);
       return;
     }
 
@@ -1176,25 +1176,25 @@
     try {
       await store.saveProducts(nextProducts);
       renderProducts();
-      showToast("РћС‚Р·С‹РІ РѕР±РЅРѕРІР»С‘РЅ.");
+      showToast("Отзыв обновлён.");
     } catch (error) {
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
         logout();
-        showToast("РЎРµСЃСЃРёСЏ РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.", true);
+        showToast("Сессия истекла. Войдите снова.", true);
         return;
       }
-      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РѕС‚Р·С‹РІ РЅР° СЃРµСЂРІРµСЂРµ.", true);
+      showToast("Не удалось обновить отзыв на сервере.", true);
     }
   }
 
   async function deleteProductReview(productId, reviewId) {
     var entry = findProductReviewEntry(productId, reviewId);
     if (!entry) {
-      showToast("РћС‚Р·С‹РІ РЅРµ РЅР°Р№РґРµРЅ.", true);
+      showToast("Отзыв не найден.", true);
       return;
     }
 
-    var ok = window.confirm("РЈРґР°Р»РёС‚СЊ РѕС‚Р·С‹РІ Р°РІС‚РѕСЂР° \"" + entry.review.author + "\" РґР»СЏ Р°СЂРѕРјР°С‚Р° \"" + entry.product.name + "\"?");
+    var ok = window.confirm("Удалить отзыв автора \"" + entry.review.author + "\" для аромата \"" + entry.product.name + "\"?");
     if (!ok) {
       return;
     }
@@ -1215,14 +1215,14 @@
     try {
       await store.saveProducts(nextProducts);
       renderProducts();
-      showToast("РћС‚Р·С‹РІ СѓРґР°Р»С‘РЅ.");
+      showToast("Отзыв удалён.");
     } catch (error) {
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
         logout();
-        showToast("РЎРµСЃСЃРёСЏ РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.", true);
+        showToast("Сессия истекла. Войдите снова.", true);
         return;
       }
-      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ РѕС‚Р·С‹РІ РЅР° СЃРµСЂРІРµСЂРµ.", true);
+      showToast("Не удалось удалить отзыв на сервере.", true);
     }
   }
 
@@ -1324,7 +1324,7 @@
         + "    <div class=\"admin-product-reviews\">"
         + "      <div class=\"admin-product-reviews-head\">"
         + "        <strong>\u041e\u0442\u0437\u044b\u0432\u044b \u043a \u0430\u0440\u043e\u043c\u0430\u0442\u0443</strong>"
-        + "        <span>\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432Р В°РЅРѕ: " + productReviews.length + "</span>"
+        + "        <span>\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432Р°но: " + productReviews.length + "</span>"
         + "      </div>"
         + productReviewsHtml
         + "      <div class=\"admin-product-reviews-head\">"
@@ -1679,4 +1679,5 @@
       .replace(/'/g, "&#039;");
   }
 })();
+
 
