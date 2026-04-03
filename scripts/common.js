@@ -7,6 +7,7 @@
   var API_DATA_URL = "/api/store-data";
   var API_ADMIN_AUTH_URL = "/api/admin/auth";
   var API_ADMIN_PASSWORD_URL = "/api/admin/password";
+  var API_REVIEW_CAPTCHA_URL = "/api/review-captcha";
   var API_HOMEPAGE_REVIEWS_URL = "/api/homepage-reviews";
   var API_PRODUCT_REVIEWS_URL = "/api/product-reviews";
   var ADMIN_TOKEN_KEY = "veligodsky_admin_token_v1";
@@ -299,6 +300,7 @@
       city: city.slice(0, 80),
       text: text.slice(0, maxTextLength),
       rating: rating,
+      photo: String(review.photo || review.image || "").trim(),
       createdAt: createdAt
     };
   }
@@ -364,6 +366,12 @@
         maxTextLength: 500,
         sortByCreatedAtDesc: true
       }),
+      pendingReviews: normalizeReviewList(product.pendingReviews, {
+        prefix: "ppr",
+        maxItems: 120,
+        maxTextLength: 500,
+        sortByCreatedAtDesc: true
+      }),
       topWeek: Boolean(product.topWeek),
       topMonth: Boolean(product.topMonth)
     };
@@ -378,6 +386,7 @@
         maxTextLength: 500,
         sortByCreatedAtDesc: true
       }),
+      pendingHomepageReviews: [],
       products: defaultProducts.map(function (product, idx) {
         return normalizeProduct(product, idx);
       }).filter(Boolean)
@@ -410,10 +419,20 @@
       })
       : defaults.reviews;
 
+    var pendingHomepageReviews = Array.isArray(safe.pendingHomepageReviews)
+      ? normalizeReviewList(safe.pendingHomepageReviews, {
+        prefix: "phr",
+        maxItems: 120,
+        maxTextLength: 500,
+        sortByCreatedAtDesc: true
+      })
+      : [];
+
     return {
       settings: settings,
       products: products,
-      reviews: reviews
+      reviews: reviews,
+      pendingHomepageReviews: pendingHomepageReviews
     };
   }
 
@@ -589,12 +608,18 @@
   }
 
   async function fetchRemoteData() {
+    var headers = {
+      "Accept": "application/json"
+    };
+    var adminToken = getStoredAdminToken();
+    if (adminToken) {
+      headers.Authorization = "Bearer " + adminToken;
+    }
+
     var response = await fetch(API_DATA_URL + "?ts=" + Date.now(), {
       method: "GET",
       cache: "no-store",
-      headers: {
-        "Accept": "application/json"
-      }
+      headers: headers
     });
 
     if (!response.ok) {
@@ -698,6 +723,11 @@
     return Array.isArray(data.reviews) ? data.reviews : [];
   }
 
+  function getPendingHomepageReviews() {
+    var data = loadData();
+    return Array.isArray(data.pendingHomepageReviews) ? data.pendingHomepageReviews : [];
+  }
+
   async function saveHomepageReviews(reviews) {
     var data = loadData();
     data.reviews = normalizeReviewList(reviews, {
@@ -708,6 +738,18 @@
     });
     var saved = await commitData(data);
     return Array.isArray(saved.reviews) ? saved.reviews : [];
+  }
+
+  async function savePendingHomepageReviews(reviews) {
+    var data = loadData();
+    data.pendingHomepageReviews = normalizeReviewList(reviews, {
+      prefix: "phr",
+      maxItems: 120,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+    var saved = await commitData(data);
+    return Array.isArray(saved.pendingHomepageReviews) ? saved.pendingHomepageReviews : [];
   }
 
   function applyHomepageReviewsCache(reviews) {
@@ -765,7 +807,11 @@
       author: String(reviewPayload && reviewPayload.author || "").trim(),
       city: String(reviewPayload && reviewPayload.city || "").trim(),
       text: String(reviewPayload && reviewPayload.text || "").trim(),
-      rating: Math.max(1, Math.min(5, Math.round(toNumber(reviewPayload && reviewPayload.rating, 5))))
+      rating: Math.max(1, Math.min(5, Math.round(toNumber(reviewPayload && reviewPayload.rating, 5)))),
+      photo: String(reviewPayload && reviewPayload.photo || "").trim(),
+      website: String(reviewPayload && reviewPayload.website || "").trim(),
+      captchaToken: String(reviewPayload && reviewPayload.captchaToken || "").trim(),
+      captchaAnswer: String(reviewPayload && reviewPayload.captchaAnswer || "").trim()
     };
 
     var response = await fetch(API_PRODUCT_REVIEWS_URL, {
@@ -801,16 +847,7 @@
       throw new Error("HTTP " + response.status);
     }
 
-    var result = await response.json();
-    var nextReviews = normalizeReviewList(result && result.reviews, {
-      prefix: "pr",
-      maxItems: 80,
-      maxTextLength: 500,
-      sortByCreatedAtDesc: true
-    });
-
-    applyProductReviewsCache(safeProductId, nextReviews);
-    return nextReviews;
+    return response.json();
   }
 
   async function submitHomepageReview(reviewPayload) {
@@ -822,7 +859,11 @@
       author: String(reviewPayload && reviewPayload.author || "").trim(),
       city: String(reviewPayload && reviewPayload.city || "").trim(),
       text: String(reviewPayload && reviewPayload.text || "").trim(),
-      rating: Math.max(1, Math.min(5, Math.round(toNumber(reviewPayload && reviewPayload.rating, 5))))
+      rating: Math.max(1, Math.min(5, Math.round(toNumber(reviewPayload && reviewPayload.rating, 5)))),
+      photo: String(reviewPayload && reviewPayload.photo || "").trim(),
+      website: String(reviewPayload && reviewPayload.website || "").trim(),
+      captchaToken: String(reviewPayload && reviewPayload.captchaToken || "").trim(),
+      captchaAnswer: String(reviewPayload && reviewPayload.captchaAnswer || "").trim()
     };
 
     var response = await fetch(API_HOMEPAGE_REVIEWS_URL, {
@@ -854,16 +895,23 @@
       throw new Error("HTTP " + response.status);
     }
 
-    var result = await response.json();
-    var nextReviews = normalizeReviewList(result && result.reviews, {
-      prefix: "hr",
-      maxItems: 30,
-      maxTextLength: 500,
-      sortByCreatedAtDesc: true
+    return response.json();
+  }
+
+  async function fetchReviewCaptcha() {
+    var response = await fetch(API_REVIEW_CAPTCHA_URL + "?ts=" + Date.now(), {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        "Accept": "application/json"
+      }
     });
 
-    applyHomepageReviewsCache(nextReviews);
-    return nextReviews;
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    return response.json();
   }
 
   function getSettings() {
@@ -1116,6 +1164,7 @@
     API_DATA_URL: API_DATA_URL,
     API_ADMIN_AUTH_URL: API_ADMIN_AUTH_URL,
     API_ADMIN_PASSWORD_URL: API_ADMIN_PASSWORD_URL,
+    API_REVIEW_CAPTCHA_URL: API_REVIEW_CAPTCHA_URL,
     API_HOMEPAGE_REVIEWS_URL: API_HOMEPAGE_REVIEWS_URL,
     API_PRODUCT_REVIEWS_URL: API_PRODUCT_REVIEWS_URL,
     init: init,
@@ -1131,7 +1180,10 @@
     getProducts: getProducts,
     saveProducts: saveProducts,
     getHomepageReviews: getHomepageReviews,
+    getPendingHomepageReviews: getPendingHomepageReviews,
     saveHomepageReviews: saveHomepageReviews,
+    savePendingHomepageReviews: savePendingHomepageReviews,
+    fetchReviewCaptcha: fetchReviewCaptcha,
     submitHomepageReview: submitHomepageReview,
     submitProductReview: submitProductReview,
     getSettings: getSettings,

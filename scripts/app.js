@@ -9,6 +9,12 @@
   var MSK_BACKUP_NOTICE_TIMEZONE = "Europe/Moscow";
   var MSK_BACKUP_NOTICE_START_MINUTE = 15;
   var MSK_BACKUP_NOTICE_END_MINUTE = 5 * 60;
+  var MAX_REVIEW_UPLOAD_FILE_SIZE = 8 * 1024 * 1024;
+  var MAX_REVIEW_IMAGE_DATA_LENGTH = 650 * 1024;
+  var MAX_REVIEW_IMAGE_DIMENSION = 1200;
+  var REVIEW_IMAGE_QUALITY_START = 0.82;
+  var REVIEW_IMAGE_QUALITY_MIN = 0.55;
+  var REVIEW_SYNC_PAUSE_AFTER_INTERACTION_MS = 10 * 60 * 1000;
   var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
   var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
 
@@ -18,6 +24,7 @@
     filteredProducts: [],
     visibleCount: 8,
     activeTab: "week",
+    lastReviewInteractionAt: 0,
     homepageReviewDraft: readStoredHomepageReviewDraft(),
     reviewDrafts: readStoredProductReviewDrafts()
   };
@@ -200,6 +207,7 @@
     }
 
     document.addEventListener("click", handleDocumentClick);
+    document.addEventListener("focusin", handleDocumentFocusIn);
     document.addEventListener("input", handleDocumentInput);
     document.addEventListener("change", handleDocumentInput);
     document.addEventListener("submit", handleDocumentSubmit);
@@ -212,6 +220,10 @@
     });
 
     window.addEventListener("resize", updateHomepageReviewsNavState);
+
+    if (elements.homepageReviewForm) {
+      ensureReviewCaptcha(elements.homepageReviewForm);
+    }
   }
 
   async function refreshFromServer(showErrorToast) {
@@ -474,8 +486,12 @@
         ? escapeHtml(review.author) + ", " + escapeHtml(review.city)
         : escapeHtml(review.author);
       var dateLabel = formatReviewDate(review.createdAt);
+      var photoHtml = review.photo
+        ? "<img class=\"review-photo\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву от " + escapeHtml(review.author) + "\">"
+        : "";
       return ""
         + "<article class=\"review-card\">"
+        + photoHtml
         + "  <div class=\"review-head\">"
         + "    <strong>" + authorLine + "</strong>"
         + "    <span>" + buildStars(review.rating) + "</span>"
@@ -661,12 +677,16 @@
       reviewsHtml = reviews.map(function (review) {
         var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
         var dateLabel = formatReviewDate(review.createdAt);
+        var photoHtml = review.photo
+          ? "<img class=\"product-review-photo\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву от " + escapeHtml(review.author) + "\">"
+          : "";
         return ""
           + "<article class=\"product-review-item\">"
           + "  <div class=\"product-review-meta\">"
           + "    <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
           + "    <span class=\"product-review-stars\">" + buildStars(review.rating) + "</span>"
           + "  </div>"
+          + photoHtml
           + "  <p class=\"product-review-text\">" + escapeHtml(review.text) + "</p>"
           + "  <small class=\"product-review-meta\">" + escapeHtml(dateLabel) + "</small>"
           + "</article>";
@@ -685,6 +705,7 @@
       + "  <form class=\"product-review-form\" data-product-review-form data-product-id=\"" + escapeHtml(product.id) + "\">"
       + "    <div class=\"product-review-form-row\">"
       + "      <input type=\"text\" name=\"author\" maxlength=\"80\" placeholder=\"Ваше имя\" required>"
+      + "      <input type=\"text\" name=\"city\" maxlength=\"80\" placeholder=\"Город (необязательно)\">"
       + "      <select name=\"rating\" aria-label=\"Оценка\">"
       + "        <option value=\"5\">5 ★</option>"
       + "        <option value=\"4\">4 ★</option>"
@@ -693,14 +714,57 @@
       + "        <option value=\"1\">1 ★</option>"
       + "      </select>"
       + "    </div>"
-      + "    <input type=\"text\" name=\"city\" maxlength=\"80\" placeholder=\"Город (необязательно)\">"
       + "    <textarea name=\"text\" maxlength=\"500\" placeholder=\"Напишите ваш отзыв\" required></textarea>"
-      + "    <button class=\"btn btn-outline product-review-submit\" type=\"submit\">Оставить отзыв</button>"
+      + "    <div class=\"review-form-extras\">"
+      + "      <label class=\"review-upload-field\">"
+      + "        <span>Фото к отзыву (необязательно)</span>"
+      + "        <input type=\"file\" accept=\"image/*\" data-review-photo-input>"
+      + "      </label>"
+      + "      <div class=\"review-photo-preview hidden\" data-review-photo-preview-wrap>"
+      + "        <img class=\"review-photo-preview-image\" data-review-photo-preview alt=\"Предпросмотр фото к отзыву\">"
+      + "        <button class=\"btn btn-ghost\" type=\"button\" data-review-photo-remove>Убрать фото</button>"
+      + "      </div>"
+      + "      <input type=\"hidden\" name=\"photo\" value=\"\">"
+      + "      <input class=\"review-honeypot\" type=\"text\" name=\"website\" tabindex=\"-1\" autocomplete=\"off\">"
+      + "      <input type=\"hidden\" name=\"captchaToken\" value=\"\">"
+      + "      <div class=\"review-captcha\">"
+      + "        <span class=\"review-captcha-prompt\" data-captcha-prompt>Загружаем капчу...</span>"
+      + "        <div class=\"review-captcha-actions\">"
+      + "          <input type=\"text\" name=\"captchaAnswer\" inputmode=\"numeric\" placeholder=\"Ответ\" required>"
+      + "          <button class=\"btn btn-ghost\" type=\"button\" data-captcha-refresh>Обновить</button>"
+      + "        </div>"
+      + "      </div>"
+      + "    </div>"
+      + "    <div class=\"product-review-form-footer\">"
+      + "      <small class=\"product-review-note\">Ссылки в отзыве запрещены. После отправки отзыв попадёт на модерацию.</small>"
+      + "      <button class=\"btn btn-outline product-review-submit\" type=\"submit\">Отправить отзыв</button>"
+      + "    </div>"
       + "  </form>"
       + "</section>";
   }
 
   function handleDocumentClick(event) {
+    var captchaRefreshButton = event.target.closest("[data-captcha-refresh]");
+    if (captchaRefreshButton) {
+      var captchaForm = captchaRefreshButton.closest("[data-homepage-review-form], [data-product-review-form]");
+      if (captchaForm) {
+        markReviewInteraction();
+        ensureReviewCaptcha(captchaForm, true);
+      }
+      return;
+    }
+
+    var removeReviewPhotoButton = event.target.closest("[data-review-photo-remove]");
+    if (removeReviewPhotoButton) {
+      var removePhotoForm = removeReviewPhotoButton.closest("[data-homepage-review-form], [data-product-review-form]");
+      if (removePhotoForm) {
+        markReviewInteraction();
+        clearReviewPhoto(removePhotoForm);
+        persistReviewDraft(removePhotoForm);
+      }
+      return;
+    }
+
     var addBtn = event.target.closest(".add-to-cart-btn");
     if (addBtn) {
       var card = addBtn.closest("[data-product-id]");
@@ -735,6 +799,15 @@
     }
   }
 
+  function handleDocumentFocusIn(event) {
+    var reviewForm = event.target.closest("[data-homepage-review-form], [data-product-review-form]");
+    if (!reviewForm) {
+      return;
+    }
+    markReviewInteraction();
+    ensureReviewCaptcha(reviewForm);
+  }
+
   function handleDocumentSubmit(event) {
     var homepageReviewForm = event.target.closest("[data-homepage-review-form]");
     if (homepageReviewForm) {
@@ -753,8 +826,18 @@
   }
 
   function handleDocumentInput(event) {
+    if (event.target.matches("[data-review-photo-input]")) {
+      var photoForm = event.target.closest("[data-homepage-review-form], [data-product-review-form]");
+      if (photoForm) {
+        markReviewInteraction();
+        processReviewPhotoInput(photoForm, event.target);
+      }
+      return;
+    }
+
     var homepageReviewForm = event.target.closest("[data-homepage-review-form]");
     if (homepageReviewForm) {
+      markReviewInteraction();
       saveHomepageReviewDraft(homepageReviewForm);
       return;
     }
@@ -763,7 +846,19 @@
     if (!reviewForm) {
       return;
     }
+    markReviewInteraction();
     saveProductReviewDraft(reviewForm);
+  }
+
+  function markReviewInteraction() {
+    state.lastReviewInteractionAt = Date.now();
+  }
+
+  function hasRecentReviewInteraction() {
+    if (!Number.isFinite(state.lastReviewInteractionAt) || state.lastReviewInteractionAt <= 0) {
+      return false;
+    }
+    return (Date.now() - state.lastReviewInteractionAt) < REVIEW_SYNC_PAUSE_AFTER_INTERACTION_MS;
   }
 
   function isEditingProductReviewForm() {
@@ -855,6 +950,7 @@
       String(state.homepageReviewDraft.author || "").trim()
       || String(state.homepageReviewDraft.city || "").trim()
       || String(state.homepageReviewDraft.text || "").trim()
+      || String(state.homepageReviewDraft.photo || "").trim()
       || String(state.homepageReviewDraft.rating || "5") !== "5"
     );
   }
@@ -864,6 +960,7 @@
     captureProductReviewDraftsFromDom();
     return isEditingHomepageReviewForm()
       || isEditingProductReviewForm()
+      || hasRecentReviewInteraction()
       || hasHomepageReviewDraft()
       || hasProductReviewDrafts();
   }
@@ -877,17 +974,20 @@
     var cityInput = form.querySelector("[name=\"city\"]");
     var textInput = form.querySelector("[name=\"text\"]");
     var ratingInput = form.querySelector("[name=\"rating\"]");
+    var photoInput = form.querySelector("[name=\"photo\"]");
 
     var draft = {
       author: authorInput ? String(authorInput.value || "") : "",
       city: cityInput ? String(cityInput.value || "") : "",
       text: textInput ? String(textInput.value || "") : "",
-      rating: ratingInput ? String(ratingInput.value || "5") : "5"
+      rating: ratingInput ? String(ratingInput.value || "5") : "5",
+      photo: photoInput ? String(photoInput.value || "") : ""
     };
 
     var isEmpty = !draft.author.trim()
       && !draft.city.trim()
       && !draft.text.trim()
+      && !draft.photo.trim()
       && draft.rating === "5";
 
     if (isEmpty) {
@@ -919,6 +1019,7 @@
     var cityInput = form.querySelector("[name=\"city\"]");
     var textInput = form.querySelector("[name=\"text\"]");
     var ratingInput = form.querySelector("[name=\"rating\"]");
+    var photoInput = form.querySelector("[name=\"photo\"]");
 
     if (authorInput) {
       authorInput.value = draft.author || "";
@@ -932,11 +1033,224 @@
     if (ratingInput) {
       ratingInput.value = draft.rating || "5";
     }
+    if (photoInput) {
+      photoInput.value = draft.photo || "";
+    }
+    syncReviewPhotoPreview(form, draft.photo || "");
   }
 
   function restoreReviewDrafts() {
     restoreHomepageReviewDraft();
     restoreProductReviewDrafts();
+  }
+
+  function persistReviewDraft(form) {
+    if (!form) {
+      return;
+    }
+
+    if (form.matches("[data-homepage-review-form]")) {
+      saveHomepageReviewDraft(form);
+      return;
+    }
+
+    if (form.matches("[data-product-review-form]")) {
+      saveProductReviewDraft(form);
+    }
+  }
+
+  function syncReviewPhotoPreview(form, photoData) {
+    if (!form) {
+      return;
+    }
+
+    var wrap = form.querySelector("[data-review-photo-preview-wrap]");
+    var image = form.querySelector("[data-review-photo-preview]");
+    if (!wrap || !image) {
+      return;
+    }
+
+    var safePhoto = String(photoData || "").trim();
+    if (!safePhoto) {
+      image.removeAttribute("src");
+      wrap.classList.add("hidden");
+      return;
+    }
+
+    image.src = safePhoto;
+    wrap.classList.remove("hidden");
+  }
+
+  function clearReviewPhoto(form) {
+    if (!form) {
+      return;
+    }
+
+    var hiddenPhotoInput = form.querySelector("[name=\"photo\"]");
+    var fileInput = form.querySelector("[data-review-photo-input]");
+    if (hiddenPhotoInput) {
+      hiddenPhotoInput.value = "";
+    }
+    if (fileInput) {
+      fileInput.value = "";
+    }
+    syncReviewPhotoPreview(form, "");
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        resolve(String(reader.result || ""));
+      };
+      reader.onerror = function () {
+        reject(new Error("REVIEW_PHOTO_READ_FAILED"));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImageElement(src) {
+    return new Promise(function (resolve, reject) {
+      var image = new Image();
+      image.onload = function () {
+        resolve(image);
+      };
+      image.onerror = function () {
+        reject(new Error("REVIEW_PHOTO_LOAD_FAILED"));
+      };
+      image.src = src;
+    });
+  }
+
+  function renderToJpegDataUrl(image, maxDimension, quality) {
+    var width = Number(image.naturalWidth || image.width || 0);
+    var height = Number(image.naturalHeight || image.height || 0);
+    if (!width || !height) {
+      throw new Error("REVIEW_PHOTO_INVALID");
+    }
+
+    var ratio = Math.min(1, maxDimension / Math.max(width, height));
+    var targetWidth = Math.max(1, Math.round(width * ratio));
+    var targetHeight = Math.max(1, Math.round(height * ratio));
+    var canvas = document.createElement("canvas");
+    var context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("REVIEW_PHOTO_CANVAS_UNAVAILABLE");
+    }
+
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+
+  async function optimizeReviewPhotoFile(file) {
+    if (!file) {
+      throw new Error("REVIEW_PHOTO_REQUIRED");
+    }
+    if (!String(file.type || "").startsWith("image/")) {
+      throw new Error("REVIEW_PHOTO_INVALID_TYPE");
+    }
+    if (Number(file.size || 0) > MAX_REVIEW_UPLOAD_FILE_SIZE) {
+      throw new Error("REVIEW_PHOTO_FILE_TOO_LARGE");
+    }
+
+    var originalDataUrl = await fileToDataUrl(file);
+    var image = await loadImageElement(originalDataUrl);
+    var currentDimension = MAX_REVIEW_IMAGE_DIMENSION;
+    var currentQuality = REVIEW_IMAGE_QUALITY_START;
+    var attempts = 0;
+    var best = "";
+
+    while (attempts < 10) {
+      var candidate = renderToJpegDataUrl(image, currentDimension, currentQuality);
+      best = candidate;
+      if (candidate.length <= MAX_REVIEW_IMAGE_DATA_LENGTH) {
+        return candidate;
+      }
+      currentDimension = Math.max(560, Math.round(currentDimension * 0.88));
+      currentQuality = Math.max(REVIEW_IMAGE_QUALITY_MIN, Number((currentQuality - 0.06).toFixed(2)));
+      attempts += 1;
+    }
+
+    if (best && best.length <= MAX_REVIEW_IMAGE_DATA_LENGTH) {
+      return best;
+    }
+
+    throw new Error("REVIEW_PHOTO_FILE_TOO_LARGE");
+  }
+
+  async function processReviewPhotoInput(form, input) {
+    if (!form || !input) {
+      return;
+    }
+
+    var file = input.files && input.files[0];
+    if (!file) {
+      clearReviewPhoto(form);
+      persistReviewDraft(form);
+      return;
+    }
+
+    try {
+      var optimized = await optimizeReviewPhotoFile(file);
+      var hiddenPhotoInput = form.querySelector("[name=\"photo\"]");
+      if (hiddenPhotoInput) {
+        hiddenPhotoInput.value = optimized;
+      }
+      syncReviewPhotoPreview(form, optimized);
+      persistReviewDraft(form);
+    } catch (error) {
+      input.value = "";
+      clearReviewPhoto(form);
+      persistReviewDraft(form);
+
+      var message = String(error && error.message || "");
+      if (message === "REVIEW_PHOTO_INVALID_TYPE") {
+        showToast("К отзыву можно прикрепить только изображение.", true);
+        return;
+      }
+      if (message === "REVIEW_PHOTO_FILE_TOO_LARGE") {
+        showToast("Фото слишком большое. Выберите изображение поменьше.", true);
+        return;
+      }
+      showToast("Не удалось обработать фото отзыва.", true);
+    }
+  }
+
+  async function ensureReviewCaptcha(form, forceRefresh) {
+    if (!form || typeof store.fetchReviewCaptcha !== "function") {
+      return;
+    }
+
+    var prompt = form.querySelector("[data-captcha-prompt]");
+    var tokenInput = form.querySelector("[name=\"captchaToken\"]");
+    var answerInput = form.querySelector("[name=\"captchaAnswer\"]");
+    if (!prompt || !tokenInput) {
+      return;
+    }
+
+    if (!forceRefresh && String(tokenInput.value || "").trim()) {
+      return;
+    }
+
+    prompt.textContent = "Загружаем капчу...";
+    tokenInput.value = "";
+
+    try {
+      var payload = await store.fetchReviewCaptcha();
+      tokenInput.value = String(payload && payload.token || "").trim();
+      prompt.textContent = String(payload && payload.prompt || "Решите пример");
+      if (answerInput) {
+        answerInput.value = "";
+      }
+    } catch (error) {
+      prompt.textContent = "Не удалось загрузить капчу. Нажмите «Обновить».";
+    }
   }
 
   function saveProductReviewDraft(form) {
@@ -953,17 +1267,20 @@
     var cityInput = form.querySelector("[name=\"city\"]");
     var textInput = form.querySelector("[name=\"text\"]");
     var ratingInput = form.querySelector("[name=\"rating\"]");
+    var photoInput = form.querySelector("[name=\"photo\"]");
 
     var draft = {
       author: authorInput ? String(authorInput.value || "") : "",
       city: cityInput ? String(cityInput.value || "") : "",
       text: textInput ? String(textInput.value || "") : "",
-      rating: ratingInput ? String(ratingInput.value || "5") : "5"
+      rating: ratingInput ? String(ratingInput.value || "5") : "5",
+      photo: photoInput ? String(photoInput.value || "") : ""
     };
 
     var isEmpty = !draft.author.trim()
       && !draft.city.trim()
       && !draft.text.trim()
+      && !draft.photo.trim()
       && draft.rating === "5";
 
     if (isEmpty) {
@@ -1000,6 +1317,7 @@
       var cityInput = form.querySelector("[name=\"city\"]");
       var textInput = form.querySelector("[name=\"text\"]");
       var ratingInput = form.querySelector("[name=\"rating\"]");
+      var photoInput = form.querySelector("[name=\"photo\"]");
 
       if (authorInput) {
         authorInput.value = draft.author || "";
@@ -1013,6 +1331,11 @@
       if (ratingInput) {
         ratingInput.value = draft.rating || "5";
       }
+      if (photoInput) {
+        photoInput.value = draft.photo || "";
+      }
+      syncReviewPhotoPreview(form, draft.photo || "");
+      ensureReviewCaptcha(form);
     });
   }
 
@@ -1032,6 +1355,10 @@
     var city = String(formData.get("city") || "").trim();
     var text = String(formData.get("text") || "").trim();
     var rating = Math.max(1, Math.min(5, Math.round(Number(formData.get("rating")) || 5)));
+    var photo = String(formData.get("photo") || "").trim();
+    var website = String(formData.get("website") || "").trim();
+    var captchaToken = String(formData.get("captchaToken") || "").trim();
+    var captchaAnswer = String(formData.get("captchaAnswer") || "").trim();
 
     if (!author || author.length < 2) {
       showToast("Укажите имя для отзыва.", true);
@@ -1040,6 +1367,12 @@
 
     if (!text || text.length < 6) {
       showToast("Текст отзыва должен быть не короче 6 символов.", true);
+      return;
+    }
+
+    if (!captchaToken || !captchaAnswer) {
+      ensureReviewCaptcha(form, true);
+      showToast("Решите капчу перед отправкой отзыва.", true);
       return;
     }
 
@@ -1053,22 +1386,24 @@
         author: author,
         city: city,
         text: text,
-        rating: rating
+        rating: rating,
+        photo: photo,
+        website: website,
+        captchaToken: captchaToken,
+        captchaAnswer: captchaAnswer
       });
 
       delete state.reviewDrafts[productId];
       persistProductReviewDrafts();
-      state.products = store.getProducts();
-      renderTopSections();
-      applyFilters(false);
-
       form.reset();
       var ratingSelect = form.querySelector("select[name=\"rating\"]");
       if (ratingSelect) {
         ratingSelect.value = "5";
       }
+      clearReviewPhoto(form);
+      ensureReviewCaptcha(form, true);
 
-      showToast("Спасибо! Отзыв опубликован.");
+      showToast("Спасибо! Отзыв отправлен на модерацию.");
       trackEvent("product_review_submit", {
         product_id: productId,
         rating: rating
@@ -1086,7 +1421,19 @@
       }
 
       if (message.indexOf("INVALID_REVIEW_PAYLOAD:") === 0) {
-        showToast("Проверьте имя, оценку и текст отзыва.", true);
+        var validationCode = message.split(":")[1] || "";
+        if (validationCode === "LINKS_NOT_ALLOWED") {
+          showToast("Ссылки в отзывах запрещены.", true);
+        } else if (validationCode === "CAPTCHA_REQUIRED" || validationCode === "CAPTCHA_INVALID" || validationCode === "CAPTCHA_EXPIRED" || validationCode === "CAPTCHA_TOO_FAST") {
+          ensureReviewCaptcha(form, true);
+          showToast("Капча не пройдена. Решите новый пример и отправьте ещё раз.", true);
+        } else if (validationCode === "REVIEW_PHOTO_TOO_LARGE") {
+          showToast("Фото отзыва слишком большое.", true);
+        } else if (validationCode === "INVALID_REVIEW_PHOTO") {
+          showToast("Фото отзыва должно быть изображением.", true);
+        } else {
+          showToast("Проверьте имя, оценку и текст отзыва.", true);
+        }
         return;
       }
 
@@ -1118,6 +1465,10 @@
     var city = String(formData.get("city") || "").trim();
     var text = String(formData.get("text") || "").trim();
     var rating = Math.max(1, Math.min(5, Math.round(Number(formData.get("rating")) || 5)));
+    var photo = String(formData.get("photo") || "").trim();
+    var website = String(formData.get("website") || "").trim();
+    var captchaToken = String(formData.get("captchaToken") || "").trim();
+    var captchaAnswer = String(formData.get("captchaAnswer") || "").trim();
 
     if (!author || author.length < 2) {
       showToast("Укажите имя для отзыва.", true);
@@ -1126,6 +1477,12 @@
 
     if (!text || text.length < 6) {
       showToast("Текст отзыва должен быть не короче 6 символов.", true);
+      return;
+    }
+
+    if (!captchaToken || !captchaAnswer) {
+      ensureReviewCaptcha(form, true);
+      showToast("Решите капчу перед отправкой отзыва.", true);
       return;
     }
 
@@ -1139,21 +1496,24 @@
         author: author,
         city: city,
         text: text,
-        rating: rating
+        rating: rating,
+        photo: photo,
+        website: website,
+        captchaToken: captchaToken,
+        captchaAnswer: captchaAnswer
       });
 
       state.homepageReviewDraft = null;
       persistHomepageReviewDraft();
-      state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
-      renderHomepageReviews();
-
       form.reset();
       var ratingSelect = form.querySelector("select[name=\"rating\"]");
       if (ratingSelect) {
         ratingSelect.value = "5";
       }
+      clearReviewPhoto(form);
+      ensureReviewCaptcha(form, true);
 
-      showToast("Спасибо! Отзыв добавлен на главную.");
+      showToast("Спасибо! Отзыв отправлен на модерацию.");
       trackEvent("homepage_review_submit", {
         rating: rating
       });
@@ -1170,7 +1530,19 @@
       }
 
       if (message.indexOf("INVALID_REVIEW_PAYLOAD:") === 0) {
-        showToast("Проверьте имя, оценку и текст отзыва.", true);
+        var homepageValidationCode = message.split(":")[1] || "";
+        if (homepageValidationCode === "LINKS_NOT_ALLOWED") {
+          showToast("Ссылки в отзывах запрещены.", true);
+        } else if (homepageValidationCode === "CAPTCHA_REQUIRED" || homepageValidationCode === "CAPTCHA_INVALID" || homepageValidationCode === "CAPTCHA_EXPIRED" || homepageValidationCode === "CAPTCHA_TOO_FAST") {
+          ensureReviewCaptcha(form, true);
+          showToast("Капча не пройдена. Решите новый пример и отправьте ещё раз.", true);
+        } else if (homepageValidationCode === "REVIEW_PHOTO_TOO_LARGE") {
+          showToast("Фото отзыва слишком большое.", true);
+        } else if (homepageValidationCode === "INVALID_REVIEW_PHOTO") {
+          showToast("Фото отзыва должно быть изображением.", true);
+        } else {
+          showToast("Проверьте имя, оценку и текст отзыва.", true);
+        }
         return;
       }
 

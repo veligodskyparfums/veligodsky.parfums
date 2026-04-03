@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   "use strict";
 
   var store = window.VeligodskyStore;
@@ -29,7 +29,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     init().catch(function () {
       openLogin();
-      showToast("Не удалось загрузить данные сервера. Проверьте подключение.", true);
+      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РґР°РЅРЅС‹Рµ СЃРµСЂРІРµСЂР°. РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕРґРєР»СЋС‡РµРЅРёРµ.", true);
     });
   });
 
@@ -80,6 +80,7 @@
     elements.homepageReviewRatingInput = document.getElementById("homepageReviewRatingInput");
     elements.homepageReviewTextInput = document.getElementById("homepageReviewTextInput");
     elements.homepageReviewResetBtn = document.getElementById("homepageReviewResetBtn");
+    elements.adminPendingHomepageReviewsList = document.getElementById("adminPendingHomepageReviewsList");
     elements.adminHomepageReviewsList = document.getElementById("adminHomepageReviewsList");
     elements.toast = document.getElementById("adminToast");
   }
@@ -130,6 +131,9 @@
     }
     if (elements.adminHomepageReviewsList) {
       elements.adminHomepageReviewsList.addEventListener("click", onHomepageReviewsListClick);
+    }
+    if (elements.adminPendingHomepageReviewsList) {
+      elements.adminPendingHomepageReviewsList.addEventListener("click", onHomepageReviewsListClick);
     }
 
     window.addEventListener("focus", function () {
@@ -198,11 +202,11 @@
       } catch (error) {
         if (String(error && error.message || "").indexOf("401") >= 0) {
           logout();
-          showToast("Сессия администратора истекла. Войдите снова.", true);
+          showToast("РЎРµСЃСЃРёСЏ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР° РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.", true);
           return;
         }
         if (showErrorToast) {
-          showToast("Не удалось обновить данные с сервера.", true);
+          showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РґР°РЅРЅС‹Рµ СЃ СЃРµСЂРІРµСЂР°.", true);
         }
       }
     }
@@ -213,12 +217,12 @@
     event.preventDefault();
     var inputPassword = String(elements.passwordInput.value || "").trim();
     if (!inputPassword) {
-      showToast("Введите пароль.", true);
+      showToast("Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ.", true);
       return;
     }
 
     if (typeof store.loginAdmin !== "function") {
-      showToast("Обновите scripts/common.js на сервере.", true);
+      showToast("РћР±РЅРѕРІРёС‚Рµ scripts/common.js РЅР° СЃРµСЂРІРµСЂРµ.", true);
       return;
     }
 
@@ -228,27 +232,27 @@
       if (String(error && error.message || "").indexOf("ADMIN_LOGIN_TEMP_BLOCKED:") === 0) {
         var waitSeconds = Math.max(0, Math.round(Number(String(error.message).split(":")[1]) || 0));
         if (waitSeconds > 0) {
-          showToast("Слишком много попыток входа. Подождите " + waitSeconds + " сек.", true);
+          showToast("РЎР»РёС€РєРѕРј РјРЅРѕРіРѕ РїРѕРїС‹С‚РѕРє РІС…РѕРґР°. РџРѕРґРѕР¶РґРёС‚Рµ " + waitSeconds + " СЃРµРє.", true);
         } else {
-          showToast("Слишком много попыток входа. Попробуйте позже.", true);
+          showToast("РЎР»РёС€РєРѕРј РјРЅРѕРіРѕ РїРѕРїС‹С‚РѕРє РІС…РѕРґР°. РџРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.", true);
         }
         return;
       }
       if (String(error && error.message || "").indexOf("INVALID_CREDENTIALS") >= 0) {
-        showToast("Неверный пароль.", true);
+        showToast("РќРµРІРµСЂРЅС‹Р№ РїР°СЂРѕР»СЊ.", true);
         return;
       }
       if (String(error && error.message || "").indexOf("HTTP") >= 0) {
-        showToast("Сервер входа недоступен. Проверьте деплой.", true);
+        showToast("РЎРµСЂРІРµСЂ РІС…РѕРґР° РЅРµРґРѕСЃС‚СѓРїРµРЅ. РџСЂРѕРІРµСЂСЊС‚Рµ РґРµРїР»РѕР№.", true);
         return;
       }
-      showToast("Неверный пароль.", true);
+      showToast("РќРµРІРµСЂРЅС‹Р№ РїР°СЂРѕР»СЊ.", true);
       return;
     }
 
     sessionStorage.setItem(AUTH_KEY, "1");
     openPanel();
-    showToast("Вход выполнен");
+    showToast("Р’С…РѕРґ РІС‹РїРѕР»РЅРµРЅ");
   }
 
   function logout() {
@@ -299,14 +303,14 @@
       }
 
       elements.adminPasswordNewInput.value = "";
-      showToast(newAdminPassword ? "Настройки и пароль сохранены" : "Настройки сохранены");
+      showToast(newAdminPassword ? "РќР°СЃС‚СЂРѕР№РєРё Рё РїР°СЂРѕР»СЊ СЃРѕС…СЂР°РЅРµРЅС‹" : "РќР°СЃС‚СЂРѕР№РєРё СЃРѕС…СЂР°РЅРµРЅС‹");
     } catch (error) {
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
         logout();
-        showToast("Сессия истекла. Войдите снова.", true);
+        showToast("РЎРµСЃСЃРёСЏ РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.", true);
         return;
       }
-      showToast("Не удалось сохранить настройки на сервер.", true);
+      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РЅР° СЃРµСЂРІРµСЂ.", true);
     }
   }
 
@@ -316,14 +320,14 @@
     row.className = "volume-row";
     row.innerHTML = ""
       + "<label class=\"field\">"
-      + "  <span>Объём, ml</span>"
+      + "  <span>РћР±СЉС‘Рј, ml</span>"
       + "  <input class=\"volume-ml\" type=\"number\" min=\"1\" required value=\"" + escapeHtml(data.ml) + "\">"
       + "</label>"
       + "<label class=\"field\">"
-      + "  <span>Цена, ₽</span>"
+      + "  <span>Р¦РµРЅР°, в‚Ѕ</span>"
       + "  <input class=\"volume-price\" type=\"number\" min=\"1\" required value=\"" + escapeHtml(data.price) + "\">"
       + "</label>"
-      + "<button type=\"button\" class=\"btn btn-ghost remove-volume-btn\">Удалить</button>";
+      + "<button type=\"button\" class=\"btn btn-ghost remove-volume-btn\">РЈРґР°Р»РёС‚СЊ</button>";
 
     return row;
   }
@@ -552,7 +556,7 @@
     state.editingId = String(draft.editingId || "") || null;
     state.imageData = String(draft.imageData || "");
 
-    elements.editorTitle.textContent = state.editingId ? "Редактировать парфюм" : "Добавить парфюм";
+    elements.editorTitle.textContent = state.editingId ? "Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ РїР°СЂС„СЋРј" : "Р”РѕР±Р°РІРёС‚СЊ РїР°СЂС„СЋРј";
     elements.perfumeIdInput.value = state.editingId || "";
     elements.perfumeNameInput.value = String(draft.name || "");
     elements.perfumeBrandInput.value = String(draft.brand || "");
@@ -675,19 +679,19 @@
 
     var fileType = String(file.type || "").toLowerCase();
     if (!String(fileType).startsWith("image/")) {
-      showToast("Выберите файл изображения.", true);
+      showToast("Р’С‹Р±РµСЂРёС‚Рµ С„Р°Р№Р» РёР·РѕР±СЂР°Р¶РµРЅРёСЏ.", true);
       elements.perfumeImageInput.value = "";
       return;
     }
 
     if (fileType.indexOf("heic") >= 0 || fileType.indexOf("heif") >= 0) {
-      showToast("Формат HEIC/HEIF не поддерживается. Сохраните фото как JPG/PNG.", true);
+      showToast("Р¤РѕСЂРјР°С‚ HEIC/HEIF РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ. РЎРѕС…СЂР°РЅРёС‚Рµ С„РѕС‚Рѕ РєР°Рє JPG/PNG.", true);
       elements.perfumeImageInput.value = "";
       return;
     }
 
     if (file.size > MAX_UPLOAD_FILE_SIZE) {
-      showToast("Фото больше 12 МБ. Выберите файл поменьше.", true);
+      showToast("Р¤РѕС‚Рѕ Р±РѕР»СЊС€Рµ 12 РњР‘. Р’С‹Р±РµСЂРёС‚Рµ С„Р°Р№Р» РїРѕРјРµРЅСЊС€Рµ.", true);
       elements.perfumeImageInput.value = "";
       return;
     }
@@ -702,17 +706,17 @@
       state.imageData = optimized;
       setPreviewImage(state.imageData);
       saveEditorDraftFromForm();
-      showToast("Фото загружено");
+      showToast("Р¤РѕС‚Рѕ Р·Р°РіСЂСѓР¶РµРЅРѕ");
     } catch (error) {
       state.imageData = previousImageData;
       setPreviewImage(previousImageData);
       elements.perfumeImageInput.value = "";
       saveEditorDraftFromForm();
       if (error && error.message === "IMAGE_TOO_LARGE") {
-        showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
+        showToast("Р¤РѕС‚Рѕ СЃР»РёС€РєРѕРј С‚СЏР¶РµР»РѕРµ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РґСЂСѓРіРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ.", true);
         return;
       }
-      showToast("Не удалось обработать фото. Используйте JPG или PNG.", true);
+      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ С„РѕС‚Рѕ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ JPG РёР»Рё PNG.", true);
     }
   }
 
@@ -738,12 +742,12 @@
     var volumes = collectVolumes();
 
     if (!name || !brand) {
-      showToast("Заполните название и бренд.", true);
+      showToast("Р—Р°РїРѕР»РЅРёС‚Рµ РЅР°Р·РІР°РЅРёРµ Рё Р±СЂРµРЅРґ.", true);
       return;
     }
 
     if (!volumes.length) {
-      showToast("Добавьте хотя бы один объём и цену.", true);
+      showToast("Р”РѕР±Р°РІСЊС‚Рµ С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ РѕР±СЉС‘Рј Рё С†РµРЅСѓ.", true);
       return;
     }
 
@@ -754,7 +758,7 @@
 
     var image = state.imageData || (existing && existing.image) || store.getDefaultData().products[0].image;
     if (String(image).indexOf("data:image/") === 0 && String(image).length > MAX_IMAGE_DATA_LENGTH) {
-      showToast("Слишком тяжелое фото. Выберите другое изображение.", true);
+      showToast("РЎР»РёС€РєРѕРј С‚СЏР¶РµР»РѕРµ С„РѕС‚Рѕ. Р’С‹Р±РµСЂРёС‚Рµ РґСЂСѓРіРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ.", true);
       return;
     }
 
@@ -777,21 +781,21 @@
           return item.id === existing.id ? payload : item;
         });
         await store.saveProducts(next);
-        showToast("Товар обновлён");
+        showToast("РўРѕРІР°СЂ РѕР±РЅРѕРІР»С‘РЅ");
       } else {
         products.unshift(payload);
         await store.saveProducts(products);
-        showToast("Товар добавлен");
+        showToast("РўРѕРІР°СЂ РґРѕР±Р°РІР»РµРЅ");
       }
 
       renderProducts();
       resetEditor();
     } catch (error) {
       if (String(error && error.message || "").indexOf("413") >= 0) {
-        showToast("Фото слишком тяжелое для сервера. Уменьшите размер.", true);
+        showToast("Р¤РѕС‚Рѕ СЃР»РёС€РєРѕРј С‚СЏР¶РµР»РѕРµ РґР»СЏ СЃРµСЂРІРµСЂР°. РЈРјРµРЅСЊС€РёС‚Рµ СЂР°Р·РјРµСЂ.", true);
         return;
       }
-      showToast("Не удалось сохранить товар на сервер.", true);
+      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ С‚РѕРІР°СЂ РЅР° СЃРµСЂРІРµСЂ.", true);
     }
   }
 
@@ -801,7 +805,7 @@
     state.editingId = null;
     state.imageData = "";
 
-    elements.editorTitle.textContent = "Добавить парфюм";
+    elements.editorTitle.textContent = "Р”РѕР±Р°РІРёС‚СЊ РїР°СЂС„СЋРј";
     elements.perfumeIdInput.value = "";
     elements.perfumeForm.reset();
 
@@ -827,7 +831,7 @@
     state.editingId = product.id;
     state.imageData = product.image;
 
-    elements.editorTitle.textContent = "Редактировать парфюм";
+    elements.editorTitle.textContent = "Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ РїР°СЂС„СЋРј";
     elements.perfumeIdInput.value = product.id;
     elements.perfumeNameInput.value = product.name;
     elements.perfumeBrandInput.value = product.brand;
@@ -858,7 +862,7 @@
       return;
     }
 
-    var ok = window.confirm("Удалить аромат \"" + target.name + "\"?");
+    var ok = window.confirm("РЈРґР°Р»РёС‚СЊ Р°СЂРѕРјР°С‚ \"" + target.name + "\"?");
     if (!ok) {
       return;
     }
@@ -876,17 +880,38 @@
       store.saveCart(cart);
 
       renderProducts();
-      showToast("Товар удалён");
+      showToast("РўРѕРІР°СЂ СѓРґР°Р»С‘РЅ");
 
       if (state.editingId === productId) {
         resetEditor();
       }
     } catch (error) {
-      showToast("Не удалось удалить товар на сервере.", true);
+      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ С‚РѕРІР°СЂ РЅР° СЃРµСЂРІРµСЂРµ.", true);
     }
   }
 
   function onProductListClick(event) {
+    var pendingReviewActionButton = event.target.closest("[data-product-pending-review-action]");
+    if (pendingReviewActionButton) {
+      var pendingAction = String(pendingReviewActionButton.dataset.productPendingReviewAction || "");
+      var pendingProductId = String(pendingReviewActionButton.dataset.productId || "");
+      var pendingReviewId = String(pendingReviewActionButton.dataset.reviewId || "");
+
+      if (!pendingProductId || !pendingReviewId) {
+        return;
+      }
+
+      if (pendingAction === "approve") {
+        approvePendingProductReview(pendingProductId, pendingReviewId);
+        return;
+      }
+
+      if (pendingAction === "reject") {
+        rejectPendingProductReview(pendingProductId, pendingReviewId);
+        return;
+      }
+    }
+
     var reviewActionButton = event.target.closest("[data-product-review-action]");
     if (reviewActionButton) {
       var reviewAction = String(reviewActionButton.dataset.productReviewAction || "");
@@ -951,9 +976,9 @@
 
     try {
       await store.saveProducts(next);
-      showToast("Топ-статус обновлён");
+      showToast("РўРѕРї-СЃС‚Р°С‚СѓСЃ РѕР±РЅРѕРІР»С‘РЅ");
     } catch (error) {
-      showToast("Не удалось обновить топ-статус на сервере.", true);
+      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ С‚РѕРї-СЃС‚Р°С‚СѓСЃ РЅР° СЃРµСЂРІРµСЂРµ.", true);
       toggle.checked = !checked;
     }
   }
@@ -983,31 +1008,125 @@
     };
   }
 
-  async function editProductReview(productId, reviewId) {
-    var entry = findProductReviewEntry(productId, reviewId);
+  function findPendingProductReviewEntry(productId, reviewId) {
+    var products = store.getProducts();
+    var product = products.find(function (item) {
+      return String(item && item.id) === String(productId);
+    });
+    if (!product) {
+      return null;
+    }
+
+    var pendingReviews = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
+    var review = pendingReviews.find(function (item) {
+      return String(item && item.id) === String(reviewId);
+    });
+
+    if (!review) {
+      return null;
+    }
+
+    return {
+      product: product,
+      review: review,
+      products: products
+    };
+  }
+
+  async function approvePendingProductReview(productId, reviewId) {
+    var entry = findPendingProductReviewEntry(productId, reviewId);
     if (!entry) {
-      showToast("Отзыв не найден.", true);
+      showToast("Р С›РЎвЂљР В·РЎвЂ№Р Р† Р Р…Р В° Р СР С•Р Т‘Р ВµРЎР‚Р В°РЎвЂ Р С‘Р С‘ Р Р…Р Вµ Р Р…Р В°Р в„–Р Т‘Р ВµР Р….", true);
       return;
     }
 
-    var nextAuthor = window.prompt("Имя автора:", String(entry.review.author || ""));
+    var nextProducts = entry.products.map(function (product) {
+      if (String(product.id) !== String(productId)) {
+        return product;
+      }
+
+      var published = Array.isArray(product.reviews) ? product.reviews.slice() : [];
+      var pending = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
+      published.unshift(Object.assign({}, entry.review, {
+        id: String(entry.review.id || store.uid("pr")).replace(/^ppr_/, "pr_")
+      }));
+
+      return Object.assign({}, product, {
+        reviews: published,
+        pendingReviews: pending.filter(function (item) {
+          return String(item && item.id) !== String(reviewId);
+        })
+      });
+    });
+
+    try {
+      await store.saveProducts(nextProducts);
+      renderProducts();
+      showToast("Р С›РЎвЂљР В·РЎвЂ№Р Р† Р С•Р С—РЎС“Р В±Р В»Р С‘Р С”Р С•Р Р†Р В°Р Р….");
+    } catch (error) {
+      showToast("Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р С•Р С—РЎС“Р В±Р В»Р С‘Р С”Р С•Р Р†Р В°РЎвЂљРЎРЉ Р С•РЎвЂљР В·РЎвЂ№Р Р†.", true);
+    }
+  }
+
+  async function rejectPendingProductReview(productId, reviewId) {
+    var entry = findPendingProductReviewEntry(productId, reviewId);
+    if (!entry) {
+      showToast("Р С›РЎвЂљР В·РЎвЂ№Р Р† Р Р…Р В° Р СР С•Р Т‘Р ВµРЎР‚Р В°РЎвЂ Р С‘Р С‘ Р Р…Р Вµ Р Р…Р В°Р в„–Р Т‘Р ВµР Р….", true);
+      return;
+    }
+
+    var ok = window.confirm("Р С›РЎвЂљР С”Р В»Р С•Р Р…Р С‘РЎвЂљРЎРЉ Р С•РЎвЂљР В·РЎвЂ№Р Р† \"" + entry.review.author + "\" Р Т‘Р В»РЎРЏ Р В°РЎР‚Р С•Р СР В°РЎвЂљР В° \"" + entry.product.name + "\"?");
+    if (!ok) {
+      return;
+    }
+
+    var nextProducts = entry.products.map(function (product) {
+      if (String(product.id) !== String(productId)) {
+        return product;
+      }
+
+      var pending = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
+      return Object.assign({}, product, {
+        pendingReviews: pending.filter(function (item) {
+          return String(item && item.id) !== String(reviewId);
+        })
+      });
+    });
+
+    try {
+      await store.saveProducts(nextProducts);
+      renderProducts();
+      showToast("Р С›РЎвЂљР В·РЎвЂ№Р Р† Р С•РЎвЂљР С”Р В»Р С•Р Р…РЎвЂР Р….");
+    } catch (error) {
+      showToast("Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р С•РЎвЂљР С”Р В»Р С•Р Р…Р С‘РЎвЂљРЎРЉ Р С•РЎвЂљР В·РЎвЂ№Р Р†.", true);
+    }
+  }
+
+  async function editProductReview(productId, reviewId) {
+    var entry = findProductReviewEntry(productId, reviewId);
+    if (!entry) {
+      showToast("РћС‚Р·С‹РІ РЅРµ РЅР°Р№РґРµРЅ.", true);
+      return;
+    }
+
+    var nextAuthor = window.prompt("РРјСЏ Р°РІС‚РѕСЂР°:", String(entry.review.author || ""));
     if (nextAuthor === null) {
       return;
     }
     nextAuthor = String(nextAuthor || "").trim();
     if (!nextAuthor || nextAuthor.length < 2) {
-      showToast("Имя автора должно быть не короче 2 символов.", true);
+      showToast("РРјСЏ Р°РІС‚РѕСЂР° РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ РЅРµ РєРѕСЂРѕС‡Рµ 2 СЃРёРјРІРѕР»РѕРІ.", true);
       return;
     }
 
-    var nextCity = window.prompt("Город (можно оставить пустым):", String(entry.review.city || ""));
+    var nextCity = window.prompt("Р“РѕСЂРѕРґ (РјРѕР¶РЅРѕ РѕСЃС‚Р°РІРёС‚СЊ РїСѓСЃС‚С‹Рј):", String(entry.review.city || ""));
     if (nextCity === null) {
       return;
     }
     nextCity = String(nextCity || "").trim();
 
     var nextRatingRaw = window.prompt(
-      "Оценка от 1 до 5:",
+      "РћС†РµРЅРєР° РѕС‚ 1 РґРѕ 5:",
       String(Math.max(1, Math.min(5, Math.round(Number(entry.review.rating) || 5))))
     );
     if (nextRatingRaw === null) {
@@ -1016,18 +1135,18 @@
 
     var parsedRating = Number(nextRatingRaw);
     if (!Number.isFinite(parsedRating)) {
-      showToast("Оценка должна быть числом от 1 до 5.", true);
+      showToast("РћС†РµРЅРєР° РґРѕР»Р¶РЅР° Р±С‹С‚СЊ С‡РёСЃР»РѕРј РѕС‚ 1 РґРѕ 5.", true);
       return;
     }
 
     var nextRating = Math.max(1, Math.min(5, Math.round(parsedRating)));
-    var nextText = window.prompt("Текст отзыва:", String(entry.review.text || ""));
+    var nextText = window.prompt("РўРµРєСЃС‚ РѕС‚Р·С‹РІР°:", String(entry.review.text || ""));
     if (nextText === null) {
       return;
     }
     nextText = String(nextText || "").trim();
     if (!nextText || nextText.length < 6) {
-      showToast("Текст отзыва должен быть не короче 6 символов.", true);
+      showToast("РўРµРєСЃС‚ РѕС‚Р·С‹РІР° РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РЅРµ РєРѕСЂРѕС‡Рµ 6 СЃРёРјРІРѕР»РѕРІ.", true);
       return;
     }
 
@@ -1057,25 +1176,25 @@
     try {
       await store.saveProducts(nextProducts);
       renderProducts();
-      showToast("Отзыв обновлён.");
+      showToast("РћС‚Р·С‹РІ РѕР±РЅРѕРІР»С‘РЅ.");
     } catch (error) {
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
         logout();
-        showToast("Сессия истекла. Войдите снова.", true);
+        showToast("РЎРµСЃСЃРёСЏ РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.", true);
         return;
       }
-      showToast("Не удалось обновить отзыв на сервере.", true);
+      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РѕС‚Р·С‹РІ РЅР° СЃРµСЂРІРµСЂРµ.", true);
     }
   }
 
   async function deleteProductReview(productId, reviewId) {
     var entry = findProductReviewEntry(productId, reviewId);
     if (!entry) {
-      showToast("Отзыв не найден.", true);
+      showToast("РћС‚Р·С‹РІ РЅРµ РЅР°Р№РґРµРЅ.", true);
       return;
     }
 
-    var ok = window.confirm("Удалить отзыв автора \"" + entry.review.author + "\" для аромата \"" + entry.product.name + "\"?");
+    var ok = window.confirm("РЈРґР°Р»РёС‚СЊ РѕС‚Р·С‹РІ Р°РІС‚РѕСЂР° \"" + entry.review.author + "\" РґР»СЏ Р°СЂРѕРјР°С‚Р° \"" + entry.product.name + "\"?");
     if (!ok) {
       return;
     }
@@ -1096,14 +1215,14 @@
     try {
       await store.saveProducts(nextProducts);
       renderProducts();
-      showToast("Отзыв удалён.");
+      showToast("РћС‚Р·С‹РІ СѓРґР°Р»С‘РЅ.");
     } catch (error) {
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
         logout();
-        showToast("Сессия истекла. Войдите снова.", true);
+        showToast("РЎРµСЃСЃРёСЏ РёСЃС‚РµРєР»Р°. Р’РѕР№РґРёС‚Рµ СЃРЅРѕРІР°.", true);
         return;
       }
-      showToast("Не удалось удалить отзыв на сервере.", true);
+      showToast("РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ РѕС‚Р·С‹РІ РЅР° СЃРµСЂРІРµСЂРµ.", true);
     }
   }
 
@@ -1121,14 +1240,19 @@
       }).join(" | " );
 
       var productReviews = Array.isArray(product.reviews) ? product.reviews : [];
+      var pendingProductReviews = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
       var productReviewsHtml = "";
+      var pendingProductReviewsHtml = "";
 
       if (!productReviews.length) {
-        productReviewsHtml = "<div class=\"admin-product-review-empty\">\u041f\u043e\u043a\u0430 \u043d\u0435\u0442 \u043e\u0442\u0437\u044b\u0432\u043e\u0432 \u043f\u043e \u044d\u0442\u043e\u043c\u0443 \u0430\u0440\u043e\u043c\u0430\u0442\u0443.\u003c/div>";
+        productReviewsHtml = "<div class=\"admin-product-review-empty\">\u041f\u043e\u043a\u0430 \u043d\u0435\u0442 \u043e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u043d\u043d\u044b\u0445 \u043e\u0442\u0437\u044b\u0432\u043e\u0432.\u003c/div>";
       } else {
         productReviewsHtml = "<div class=\"admin-product-reviews-list\">"
           + productReviews.map(function (review) {
             var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
+            var photoHtml = review.photo
+              ? "<img class=\"admin-review-photo\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву\">"
+              : "";
             return ""
               + "<article class=\"admin-review-card\">"
               + "  <div class=\"admin-review-head\">"
@@ -1138,10 +1262,40 @@
               + "    </div>"
               + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
               + "  </div>"
+              + photoHtml
               + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
               + "  <div class=\"admin-review-actions\">"
               + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-review-action=\"edit\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c</button>"
               + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-review-action=\"delete\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u0423\u0434\u0430\u043b\u0438\u0442\u044c</button>"
+              + "  </div>"
+              + "</article>";
+          }).join("")
+          + "</div>";
+      }
+
+      if (!pendingProductReviews.length) {
+        pendingProductReviewsHtml = "<div class=\"admin-product-review-empty\">\u041d\u0430 \u043c\u043e\u0434\u0435\u0440\u0430\u0446\u0438\u0438 \u043f\u043e\u043a\u0430 \u043d\u0435\u0442 \u043e\u0442\u0437\u044b\u0432\u043e\u0432.\u003c/div>";
+      } else {
+        pendingProductReviewsHtml = "<div class=\"admin-product-reviews-list\">"
+          + pendingProductReviews.map(function (review) {
+            var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
+            var photoHtml = review.photo
+              ? "<img class=\"admin-review-photo\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву\">"
+              : "";
+            return ""
+              + "<article class=\"admin-review-card admin-review-card-pending\">"
+              + "  <div class=\"admin-review-head\">"
+              + "    <div>"
+              + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
+              + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
+              + "    </div>"
+              + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
+              + "  </div>"
+              + photoHtml
+              + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
+              + "  <div class=\"admin-review-actions\">"
+              + "    <button class=\"btn btn-primary\" type=\"button\" data-product-pending-review-action=\"approve\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u0442\u044c</button>"
+              + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-pending-review-action=\"reject\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u041e\u0442\u043a\u043b\u043e\u043d\u0438\u0442\u044c</button>"
               + "  </div>"
               + "</article>";
           }).join("")
@@ -1170,9 +1324,14 @@
         + "    <div class=\"admin-product-reviews\">"
         + "      <div class=\"admin-product-reviews-head\">"
         + "        <strong>\u041e\u0442\u0437\u044b\u0432\u044b \u043a \u0430\u0440\u043e\u043c\u0430\u0442\u0443</strong>"
-        + "        <span>\u0412\u0441\u0435\u0433\u043e: " + productReviews.length + "</span>"
+        + "        <span>\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432Р В°РЅРѕ: " + productReviews.length + "</span>"
         + "      </div>"
         + productReviewsHtml
+        + "      <div class=\"admin-product-reviews-head\">"
+        + "        <strong>\u041d\u0430 \u043c\u043e\u0434\u0435\u0440\u0430\u0446\u0438\u0438</strong>"
+        + "        <span>\u0412\u0441\u0435\u0433\u043e: " + pendingProductReviews.length + "</span>"
+        + "      </div>"
+        + pendingProductReviewsHtml
         + "    </div>"
         + "  </div>"
         + "</article>";
@@ -1242,7 +1401,7 @@
     event.preventDefault();
 
     if (typeof store.getHomepageReviews !== "function" || typeof store.saveHomepageReviews !== "function") {
-      showToast("Обновите scripts/common.js, чтобы сохранить отзывы.", true);
+      showToast("Обновите scripts/common.js, чтобы сохранять отзывы.", true);
       return;
     }
 
@@ -1332,7 +1491,90 @@
     }
   }
 
+  async function approvePendingHomepageReview(reviewId) {
+    if (typeof store.getPendingHomepageReviews !== "function" || typeof store.savePendingHomepageReviews !== "function") {
+      showToast("Обновите scripts/common.js, чтобы модерировать отзывы.", true);
+      return;
+    }
+
+    var pending = store.getPendingHomepageReviews();
+    var published = store.getHomepageReviews();
+    var target = pending.find(function (item) {
+      return String(item && item.id) === String(reviewId);
+    });
+    if (!target) {
+      return;
+    }
+
+    var nextPending = pending.filter(function (item) {
+      return String(item && item.id) !== String(reviewId);
+    });
+    var nextPublished = [Object.assign({}, target, {
+      id: String(target.id || store.uid("hr")).replace(/^phr_/, "hr_")
+    })].concat(published);
+
+    try {
+      await store.saveHomepageReviews(nextPublished);
+      await store.savePendingHomepageReviews(nextPending);
+      renderHomepageReviews();
+      showToast("Отзыв опубликован.");
+    } catch (error) {
+      showToast("Не удалось опубликовать отзыв.", true);
+    }
+  }
+
+  async function rejectPendingHomepageReview(reviewId) {
+    if (typeof store.getPendingHomepageReviews !== "function" || typeof store.savePendingHomepageReviews !== "function") {
+      showToast("Обновите scripts/common.js, чтобы модерировать отзывы.", true);
+      return;
+    }
+
+    var pending = store.getPendingHomepageReviews();
+    var target = pending.find(function (item) {
+      return String(item && item.id) === String(reviewId);
+    });
+    if (!target) {
+      return;
+    }
+
+    var ok = window.confirm("Отклонить отзыв \"" + target.author + "\"?");
+    if (!ok) {
+      return;
+    }
+
+    var nextPending = pending.filter(function (item) {
+      return String(item && item.id) !== String(reviewId);
+    });
+
+    try {
+      await store.savePendingHomepageReviews(nextPending);
+      renderHomepageReviews();
+      showToast("Отзыв отклонён.");
+    } catch (error) {
+      showToast("Не удалось отклонить отзыв.", true);
+    }
+  }
+
   function onHomepageReviewsListClick(event) {
+    var publishButton = event.target.closest("[data-review-pending-action]");
+    if (publishButton) {
+      var pendingAction = String(publishButton.dataset.reviewPendingAction || "");
+      var pendingId = String(publishButton.dataset.id || "");
+      if (!pendingId) {
+        return;
+      }
+
+      if (pendingAction === "approve") {
+        approvePendingHomepageReview(pendingId);
+        return;
+      }
+
+      if (pendingAction === "reject") {
+        rejectPendingHomepageReview(pendingId);
+        return;
+      }
+    }
+
     var button = event.target.closest("[data-review-action]");
     if (!button) {
       return;
@@ -1354,6 +1596,40 @@
     }
   }
 
+  function renderReviewPhoto(review) {
+    if (!review || !review.photo) {
+      return "";
+    }
+    return "<img class=\"admin-review-photo\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву\">";
+  }
+
+  function renderHomepageReviewCards(reviews, withModerationActions) {
+    return reviews.map(function (review) {
+      var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
+      var actionsHtml = withModerationActions
+        ? "<button class=\"btn btn-primary\" type=\"button\" data-review-pending-action=\"approve\" data-id=\"" + escapeHtml(review.id) + "\">\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u0442\u044c</button>"
+          + "<button class=\"btn btn-ghost\" type=\"button\" data-review-pending-action=\"reject\" data-id=\"" + escapeHtml(review.id) + "\">\u041e\u0442\u043a\u043b\u043e\u043d\u0438\u0442\u044c</button>"
+        : "<button class=\"btn btn-ghost\" type=\"button\" data-review-action=\"edit\" data-id=\"" + escapeHtml(review.id) + "\">Редактировать</button>"
+          + "<button class=\"btn btn-ghost\" type=\"button\" data-review-action=\"delete\" data-id=\"" + escapeHtml(review.id) + "\">Удалить</button>";
+
+      return ""
+        + "<article class=\"admin-review-card" + (withModerationActions ? " admin-review-card-pending" : "") + "\">"
+        + "  <div class=\"admin-review-head\">"
+        + "    <div>"
+        + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
+        + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
+        + "    </div>"
+        + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
+        + "  </div>"
+        + renderReviewPhoto(review)
+        + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
+        + "  <div class=\"admin-review-actions\">"
+        + actionsHtml
+        + "  </div>"
+        + "</article>";
+    }).join("");
+  }
+
   function renderHomepageReviews() {
     if (!elements.adminHomepageReviewsList) {
       return;
@@ -1364,30 +1640,23 @@
       return;
     }
 
-    var reviews = store.getHomepageReviews();
-    if (!reviews.length) {
+    var pending = typeof store.getPendingHomepageReviews === "function" ? store.getPendingHomepageReviews() : [];
+    var published = store.getHomepageReviews();
+
+    if (elements.adminPendingHomepageReviewsList) {
+      if (!pending.length) {
+        elements.adminPendingHomepageReviewsList.innerHTML = "<div class=\"empty-state\">\u041d\u0430 \u043c\u043e\u0434\u0435\u0440\u0430\u0446\u0438\u0438 \u043f\u043e\u043a\u0430 \u043d\u0435\u0442 \u043e\u0442\u0437\u044b\u0432\u043e\u0432.</div>";
+      } else {
+        elements.adminPendingHomepageReviewsList.innerHTML = renderHomepageReviewCards(pending, true);
+      }
+    }
+
+    if (!published.length) {
       elements.adminHomepageReviewsList.innerHTML = "<div class=\"empty-state\">Пока отзывов на главной нет.</div>";
       return;
     }
 
-    elements.adminHomepageReviewsList.innerHTML = reviews.map(function (review) {
-      var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
-      return ""
-        + "<article class=\"admin-review-card\">"
-        + "  <div class=\"admin-review-head\">"
-        + "    <div>"
-        + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
-        + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
-        + "    </div>"
-        + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
-        + "  </div>"
-        + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
-        + "  <div class=\"admin-review-actions\">"
-        + "    <button class=\"btn btn-ghost\" type=\"button\" data-review-action=\"edit\" data-id=\"" + escapeHtml(review.id) + "\">Редактировать</button>"
-        + "    <button class=\"btn btn-ghost\" type=\"button\" data-review-action=\"delete\" data-id=\"" + escapeHtml(review.id) + "\">Удалить</button>"
-        + "  </div>"
-        + "</article>";
-    }).join("");
+    elements.adminHomepageReviewsList.innerHTML = renderHomepageReviewCards(published, false);
   }
 
   function showToast(message, isError) {
@@ -1410,3 +1679,4 @@
       .replace(/'/g, "&#039;");
   }
 })();
+

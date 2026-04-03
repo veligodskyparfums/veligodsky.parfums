@@ -254,9 +254,33 @@
                 required
               ></textarea>
 
+                <div class="review-form-extras">
+                  <label class="review-upload-field">
+                  <span>Фото к отзыву (необязательно)</span>
+                  <input type="file" accept="image/*" data-review-photo-input>
+                </label>
+
+                <div class="review-photo-preview hidden" data-review-photo-preview-wrap>
+                  <img class="review-photo-preview-image" data-review-photo-preview alt="Предпросмотр фото к отзыву">
+                  <button class="btn btn-ghost" type="button" data-review-photo-remove>Убрать фото</button>
+                </div>
+
+                <input type="hidden" name="photo" value="">
+                <input class="review-honeypot" type="text" name="website" tabindex="-1" autocomplete="off">
+                <input type="hidden" name="captchaToken" value="">
+
+                <div class="review-captcha">
+                  <span class="review-captcha-prompt" data-captcha-prompt>Загружаем капчу...</span>
+                  <div class="review-captcha-actions">
+                    <input type="text" name="captchaAnswer" inputmode="numeric" placeholder="Ответ" required>
+                    <button class="btn btn-ghost" type="button" data-captcha-refresh>Обновить</button>
+                  </div>
+                </div>
+              </div>
+
               <div class="reviews-feedback-actions">
-                <button class="btn btn-primary" type="submit">Опубликовать отзыв</button>
-                <span class="reviews-feedback-note">Можно оставить отзыв без регистрации.</span>
+                <button class="btn btn-primary" type="submit">Отправить отзыв</button>
+                <span class="reviews-feedback-note">Можно оставить отзыв без регистрации. Публикация после модерации.</span>
               </div>
             </form>
           </div>

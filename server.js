@@ -23,8 +23,15 @@ const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60 * 1000;
 const MAX_REVIEW_AUTHOR_LENGTH = 80;
 const MAX_REVIEW_CITY_LENGTH = 80;
 const MAX_REVIEW_TEXT_LENGTH = 500;
+const MAX_REVIEW_PHOTO_DATA_LENGTH = 700 * 1024;
 const MAX_HOMEPAGE_REVIEWS = 30;
 const MAX_PRODUCT_REVIEWS_PER_PRODUCT = 80;
+const MAX_PENDING_HOMEPAGE_REVIEWS = 120;
+const MAX_PENDING_PRODUCT_REVIEWS_PER_PRODUCT = 120;
+const REVIEW_CAPTCHA_TTL_MS = 20 * 60 * 1000;
+const REVIEW_CAPTCHA_MIN_AGE_MS = 1500;
+const REVIEW_CAPTCHA_SECRET = crypto.randomBytes(32).toString("hex");
+const REVIEW_LINK_PATTERN = /(https?:\/\/|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/|\b))/i;
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -74,6 +81,12 @@ const RATE_LIMIT_RULES = {
     max: 12,
     windowMs: 60 * 1000,
     message: "Too many homepage review submissions"
+  },
+  reviewCaptcha: {
+    name: "review_captcha",
+    max: 60,
+    windowMs: 60 * 1000,
+    message: "Too many captcha requests"
   }
 };
 
@@ -167,6 +180,10 @@ function getRateLimitRule(pathname, method) {
 
   if (safePath === "/api/homepage-reviews" && safeMethod === "POST") {
     return RATE_LIMIT_RULES.homepageReviews;
+  }
+
+  if (safePath === "/api/review-captcha" && safeMethod === "GET") {
+    return RATE_LIMIT_RULES.reviewCaptcha;
   }
 
   if (safePath === "/api/store-data" && safeMethod === "PUT") {
@@ -333,6 +350,27 @@ function normalizeIsoDate(value) {
   return parsed.toISOString();
 }
 
+function containsLink(value) {
+  return REVIEW_LINK_PATTERN.test(safeString(value));
+}
+
+function sanitizeReviewPhoto(value) {
+  const safe = safeString(value);
+  if (!safe) {
+    return "";
+  }
+
+  if (safe.length > MAX_REVIEW_PHOTO_DATA_LENGTH) {
+    throw new Error("REVIEW_PHOTO_TOO_LARGE");
+  }
+
+  if (!/^data:image\/(?:jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(safe)) {
+    throw new Error("INVALID_REVIEW_PHOTO");
+  }
+
+  return safe;
+}
+
 function normalizeStoredReview(raw, prefix) {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -354,6 +392,7 @@ function normalizeStoredReview(raw, prefix) {
     city,
     text,
     rating,
+    photo: sanitizeReviewPhoto(raw.photo || raw.image),
     createdAt: normalizeIsoDate(raw.createdAt)
   };
 }
@@ -383,6 +422,14 @@ function parseIncomingReviewPayload(payload) {
   const city = safeString(payload.city).slice(0, MAX_REVIEW_CITY_LENGTH);
   const text = safeString(payload.text).slice(0, MAX_REVIEW_TEXT_LENGTH);
   const rating = clampInteger(payload.rating, 1, 5, 5);
+  const website = safeString(payload.website).slice(0, 200);
+  const captchaToken = safeString(payload.captchaToken).slice(0, 2048);
+  const captchaAnswer = safeString(payload.captchaAnswer).slice(0, 32);
+  const photo = sanitizeReviewPhoto(payload.photo || payload.image);
+
+  if (website) {
+    throw new Error("SPAM_DETECTED");
+  }
 
   if (!author || author.length < 2) {
     throw new Error("AUTHOR_REQUIRED");
@@ -390,13 +437,18 @@ function parseIncomingReviewPayload(payload) {
   if (!text || text.length < 6) {
     throw new Error("REVIEW_TEXT_REQUIRED");
   }
+  if (containsLink(author) || containsLink(city) || containsLink(text)) {
+    throw new Error("LINKS_NOT_ALLOWED");
+  }
 
   return {
-    productId,
     author,
     city,
     text,
-    rating
+    rating,
+    photo,
+    captchaToken,
+    captchaAnswer
   };
 }
 
@@ -415,6 +467,82 @@ function parseIncomingHomepageReview(payload) {
   return parseIncomingReviewPayload(payload);
 }
 
+function signReviewCaptcha(encodedPayload) {
+  return crypto
+    .createHmac("sha256", REVIEW_CAPTCHA_SECRET)
+    .update(String(encodedPayload || ""), "utf8")
+    .digest("hex");
+}
+
+function createReviewCaptchaChallenge() {
+  const left = clampInteger(crypto.randomInt(1, 10), 1, 9, 1);
+  const right = clampInteger(crypto.randomInt(1, 10), 1, 9, 1);
+  const payload = {
+    answer: left + right,
+    iat: Date.now(),
+    exp: Date.now() + REVIEW_CAPTCHA_TTL_MS,
+    nonce: crypto.randomBytes(8).toString("hex")
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+
+  return {
+    token: encodedPayload + "." + signReviewCaptcha(encodedPayload),
+    prompt: "Сколько будет " + left + " + " + right + "?"
+  };
+}
+
+function verifyReviewCaptcha(token, answer) {
+  const safeToken = safeString(token);
+  const safeAnswer = safeString(answer);
+  if (!safeToken || !safeAnswer) {
+    throw new Error("CAPTCHA_REQUIRED");
+  }
+
+  const parts = safeToken.split(".");
+  if (parts.length !== 2) {
+    throw new Error("CAPTCHA_INVALID");
+  }
+
+  const encodedPayload = safeString(parts[0]);
+  const signature = safeString(parts[1]);
+  if (!encodedPayload || !signature) {
+    throw new Error("CAPTCHA_INVALID");
+  }
+
+  if (!safeCompareStrings(signature, signReviewCaptcha(encodedPayload))) {
+    throw new Error("CAPTCHA_INVALID");
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+  } catch (error) {
+    throw new Error("CAPTCHA_INVALID");
+  }
+
+  const now = Date.now();
+  const expectedAnswer = clampInteger(payload && payload.answer, 0, 100, Number.NaN);
+  const issuedAt = clampInteger(payload && payload.iat, 0, Number.MAX_SAFE_INTEGER, 0);
+  const expiresAt = clampInteger(payload && payload.exp, 0, Number.MAX_SAFE_INTEGER, 0);
+  const actualAnswer = clampInteger(safeAnswer, -100, 100, Number.NaN);
+
+  if (!Number.isFinite(expectedAnswer) || !issuedAt || !expiresAt || !Number.isFinite(actualAnswer)) {
+    throw new Error("CAPTCHA_INVALID");
+  }
+
+  if (now > expiresAt) {
+    throw new Error("CAPTCHA_EXPIRED");
+  }
+
+  if (now - issuedAt < REVIEW_CAPTCHA_MIN_AGE_MS) {
+    throw new Error("CAPTCHA_TOO_FAST");
+  }
+
+  if (actualAnswer !== expectedAnswer) {
+    throw new Error("CAPTCHA_INVALID");
+  }
+}
+
 function readAdminPassword(data) {
   const fromData = safeString(data && data.settings && data.settings.adminPassword);
   if (fromData) {
@@ -428,7 +556,29 @@ function sanitizePublicStoreData(data) {
   if (safe.settings && Object.prototype.hasOwnProperty.call(safe.settings, "adminPassword")) {
     delete safe.settings.adminPassword;
   }
+  delete safe.pendingHomepageReviews;
+  safe.products = safe.products.map((product) => {
+    const next = Object.assign({}, product);
+    delete next.pendingReviews;
+    return next;
+  });
   return safe;
+}
+
+function sanitizeAdminStoreData(data) {
+  const safe = cloneData(validateStoreData(data));
+  if (safe.settings && Object.prototype.hasOwnProperty.call(safe.settings, "adminPassword")) {
+    delete safe.settings.adminPassword;
+  }
+  return safe;
+}
+
+function getStoreDataForRequest(req, data) {
+  const token = getBearerToken(req);
+  if (isAdminSessionValid(token)) {
+    return sanitizeAdminStoreData(data);
+  }
+  return sanitizePublicStoreData(data);
 }
 
 function ensureIncomingAdminPassword(payload, currentData) {
@@ -551,11 +701,18 @@ function validateStoreData(payload) {
     throw new Error("INVALID_PAYLOAD");
   }
 
+  if (payload.pendingHomepageReviews !== undefined && !Array.isArray(payload.pendingHomepageReviews)) {
+    throw new Error("INVALID_PAYLOAD");
+  }
+
   for (const product of payload.products) {
     if (!product || typeof product !== "object") {
       throw new Error("INVALID_PAYLOAD");
     }
     if (product.reviews !== undefined && !Array.isArray(product.reviews)) {
+      throw new Error("INVALID_PAYLOAD");
+    }
+    if (product.pendingReviews !== undefined && !Array.isArray(product.pendingReviews)) {
       throw new Error("INVALID_PAYLOAD");
     }
   }
@@ -825,7 +982,7 @@ async function handleStoreApi(req, res) {
 
   if (req.method === "GET") {
     const data = await storeRepository.read();
-    sendJson(res, 200, sanitizePublicStoreData(data));
+    sendJson(res, 200, getStoreDataForRequest(req, data));
     return;
   }
 
@@ -859,7 +1016,7 @@ async function handleStoreApi(req, res) {
       const nextPayload = ensureIncomingAdminPassword(parsed, currentData);
       const saved = await storeRepository.write(nextPayload);
 
-      sendJson(res, 200, sanitizePublicStoreData(saved));
+      sendJson(res, 200, getStoreDataForRequest(req, saved));
     } catch (error) {
       if (error.message === "INVALID_PAYLOAD") {
         sendJson(res, 400, { error: "INVALID_PAYLOAD" });
@@ -1051,6 +1208,13 @@ async function handleProductReviewsApi(req, res) {
     return;
   }
 
+  try {
+    verifyReviewCaptcha(incomingReview.captchaToken, incomingReview.captchaAnswer);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message || "CAPTCHA_INVALID" });
+    return;
+  }
+
   const currentData = await storeRepository.read();
   const nextData = cloneData(validateStoreData(currentData));
 
@@ -1064,45 +1228,47 @@ async function handleProductReviewsApi(req, res) {
   }
 
   const targetProduct = Object.assign({}, nextData.products[productIndex]);
-  const reviews = normalizeStoredReviewList(
-    targetProduct.reviews,
-    "pr",
-    MAX_PRODUCT_REVIEWS_PER_PRODUCT
+  const pendingReviews = normalizeStoredReviewList(
+    targetProduct.pendingReviews,
+    "ppr",
+    MAX_PENDING_PRODUCT_REVIEWS_PER_PRODUCT
   );
 
   const newReview = normalizeStoredReview({
-    id: "pr_" + crypto.randomBytes(6).toString("hex"),
+    id: "ppr_" + crypto.randomBytes(6).toString("hex"),
     author: incomingReview.author,
     city: incomingReview.city,
     text: incomingReview.text,
     rating: incomingReview.rating,
+    photo: incomingReview.photo,
     createdAt: new Date().toISOString()
-  }, "pr");
+  }, "ppr");
 
-  reviews.unshift(newReview);
-  targetProduct.reviews = normalizeStoredReviewList(
-    reviews,
-    "pr",
-    MAX_PRODUCT_REVIEWS_PER_PRODUCT
+  pendingReviews.unshift(newReview);
+  targetProduct.pendingReviews = normalizeStoredReviewList(
+    pendingReviews,
+    "ppr",
+    MAX_PENDING_PRODUCT_REVIEWS_PER_PRODUCT
   );
   nextData.products[productIndex] = targetProduct;
 
-  const saved = await storeRepository.write(nextData);
-  const savedProduct = saved.products.find((product) => {
-    return safeString(product && product.id) === incomingReview.productId;
-  });
-  const savedReviews = normalizeStoredReviewList(
-    savedProduct && savedProduct.reviews,
-    "pr",
-    MAX_PRODUCT_REVIEWS_PER_PRODUCT
-  );
+  await storeRepository.write(nextData);
 
-  sendJson(res, 201, {
+  sendJson(res, 202, {
     ok: true,
     productId: incomingReview.productId,
-    review: savedReviews[0] || null,
-    reviews: savedReviews
+    status: "pending",
+    message: "REVIEW_PENDING_MODERATION"
   });
+}
+
+async function handleReviewCaptchaApi(req, res) {
+  if (req.method !== "GET") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  sendJson(res, 200, createReviewCaptchaChallenge());
 }
 
 async function handleHomepageReviewsApi(req, res) {
@@ -1144,41 +1310,44 @@ async function handleHomepageReviewsApi(req, res) {
     return;
   }
 
+  try {
+    verifyReviewCaptcha(incomingReview.captchaToken, incomingReview.captchaAnswer);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message || "CAPTCHA_INVALID" });
+    return;
+  }
+
   const currentData = await storeRepository.read();
   const nextData = cloneData(validateStoreData(currentData));
-  const reviews = normalizeStoredReviewList(
-    nextData.reviews,
-    "hr",
-    MAX_HOMEPAGE_REVIEWS
+  const pendingReviews = normalizeStoredReviewList(
+    nextData.pendingHomepageReviews,
+    "phr",
+    MAX_PENDING_HOMEPAGE_REVIEWS
   );
 
   const newReview = normalizeStoredReview({
-    id: "hr_" + crypto.randomBytes(6).toString("hex"),
+    id: "phr_" + crypto.randomBytes(6).toString("hex"),
     author: incomingReview.author,
     city: incomingReview.city,
     text: incomingReview.text,
     rating: incomingReview.rating,
+    photo: incomingReview.photo,
     createdAt: new Date().toISOString()
-  }, "hr");
+  }, "phr");
 
-  reviews.unshift(newReview);
-  nextData.reviews = normalizeStoredReviewList(
-    reviews,
-    "hr",
-    MAX_HOMEPAGE_REVIEWS
+  pendingReviews.unshift(newReview);
+  nextData.pendingHomepageReviews = normalizeStoredReviewList(
+    pendingReviews,
+    "phr",
+    MAX_PENDING_HOMEPAGE_REVIEWS
   );
 
-  const saved = await storeRepository.write(nextData);
-  const savedReviews = normalizeStoredReviewList(
-    saved && saved.reviews,
-    "hr",
-    MAX_HOMEPAGE_REVIEWS
-  );
+  await storeRepository.write(nextData);
 
-  sendJson(res, 201, {
+  sendJson(res, 202, {
     ok: true,
-    review: savedReviews[0] || null,
-    reviews: savedReviews
+    status: "pending",
+    message: "REVIEW_PENDING_MODERATION"
   });
 }
 
@@ -1317,6 +1486,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/product-reviews") {
       await handleProductReviewsApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/review-captcha") {
+      await handleReviewCaptchaApi(req, res);
       return;
     }
 
