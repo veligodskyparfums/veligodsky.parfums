@@ -1324,7 +1324,7 @@
         + "    <div class=\"admin-product-reviews\">"
         + "      <div class=\"admin-product-reviews-head\">"
         + "        <strong>\u041e\u0442\u0437\u044b\u0432\u044b \u043a \u0430\u0440\u043e\u043c\u0430\u0442\u0443</strong>"
-        + "        <span>\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432Р°но: " + productReviews.length + "</span>"
+        + "        <span>\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u043d\u043e: " + productReviews.length + "</span>"
         + "      </div>"
         + productReviewsHtml
         + "      <div class=\"admin-product-reviews-head\">"

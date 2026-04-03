@@ -603,12 +603,18 @@ body.menu-open .nav {
 .product-review-form {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .product-review-form-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 8px;
+  min-width: 0;
+}
+
+.product-review-form-row > * {
+  min-width: 0;
 }
 
 .product-review-form input,
@@ -643,6 +649,9 @@ body.menu-open .nav {
 }
 
 .review-upload-field input[type="file"] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
   border-radius: var(--radius-sm);
   border: 1px dashed rgba(255, 255, 255, 0.26);
   background: rgba(255, 255, 255, 0.03);
@@ -689,12 +698,21 @@ body.menu-open .nav {
 
 .review-captcha-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
   align-items: center;
+  min-width: 0;
+}
+
+.review-captcha-actions > * {
+  min-width: 0;
 }
 
 .review-captcha-actions input {
+  width: 100%;
+}
+
+.review-captcha-actions .btn {
   width: 100%;
 }
 
