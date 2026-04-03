@@ -67,6 +67,19 @@
             </label>
           </div>
 
+          <label class="field">
+            <span>Главное фото на главной странице</span>
+            <input type="file" id="heroImageInput" accept="image/*">
+          </label>
+
+          <div class="field">
+            <span>Предпросмотр главного фото</span>
+            <div class="image-preview-wrap image-preview-wrap--hero">
+              <img id="heroImagePreview" class="image-preview hidden" alt="Предпросмотр главного фото" src="">
+            </div>
+            <button class="btn btn-ghost" type="button" id="heroImageClearBtn">Убрать фото (вернуть стандартное)</button>
+          </div>
+
           <button class="btn btn-primary" type="submit">Сохранить настройки</button>
         </form>
       </section>

@@ -111,7 +111,8 @@ const FALLBACK_DATA = {
     freeShippingThreshold: 8000,
     adminPassword: "admin123",
     storeName: "VELIGODSKY.PARFUMS",
-    backupNoticeEnabled: true
+    backupNoticeEnabled: true,
+    heroImage: ""
   },
   products: []
 };

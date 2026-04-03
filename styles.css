@@ -283,7 +283,7 @@ body.menu-open .nav {
   inset: 0;
   background:
     linear-gradient(180deg, rgba(7, 7, 7, 0.32) 0%, rgba(7, 7, 7, 0.85) 70%, rgba(7, 7, 7, 0.98) 100%),
-    url("https://images.unsplash.com/photo-1523293182086-7651a899d37f?auto=format&fit=crop&w=1800&q=80") center/cover no-repeat;
+    var(--hero-bg-image, url("https://images.unsplash.com/photo-1523293182086-7651a899d37f?auto=format&fit=crop&w=1800&q=80")) center/cover no-repeat;
   transform: scale(1.06);
 }
 
@@ -1359,6 +1359,11 @@ body.menu-open .nav {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+}
+
+.image-preview-wrap--hero {
+  width: min(100%, 440px);
+  min-height: 220px;
 }
 
 .image-preview {

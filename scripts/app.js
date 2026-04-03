@@ -15,6 +15,7 @@
   var REVIEW_IMAGE_QUALITY_START = 0.82;
   var REVIEW_IMAGE_QUALITY_MIN = 0.55;
   var REVIEW_SYNC_PAUSE_AFTER_INTERACTION_MS = 10 * 60 * 1000;
+  var MAX_HERO_IMAGE_LENGTH = 900 * 1024;
   var REVIEWS_COLLAPSED_KEY = "veligodsky_reviews_collapsed_v1";
   var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
   var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
@@ -124,6 +125,7 @@
     elements.footerChannelLink = document.getElementById("footerChannelLink");
     elements.footerDmLink = document.getElementById("footerDmLink");
     elements.freeShippingInline = document.getElementById("freeShippingInline");
+    elements.heroBg = document.getElementById("heroBg");
     elements.backupNotice = document.getElementById("backupNotice");
     elements.yearNow = document.getElementById("yearNow");
   }
@@ -398,7 +400,43 @@
       elements.freeShippingInline.textContent = store.formatPrice(settings.freeShippingThreshold);
     }
 
+    applyHeroBackground(settings);
     applyBackupNoticeVisibility(settings);
+  }
+
+  function getSafeHeroImage(value) {
+    var safe = String(value || "").trim();
+    if (!safe) {
+      return "";
+    }
+
+    if (safe.length > MAX_HERO_IMAGE_LENGTH) {
+      return "";
+    }
+
+    if (/^https?:\/\/[^\s]+$/i.test(safe)) {
+      return safe;
+    }
+
+    if (/^data:image\/(?:jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(safe)) {
+      return safe;
+    }
+
+    return "";
+  }
+
+  function applyHeroBackground(settings) {
+    if (!elements.heroBg) {
+      return;
+    }
+
+    var heroImage = getSafeHeroImage(settings && settings.heroImage);
+    if (!heroImage) {
+      elements.heroBg.style.removeProperty("--hero-bg-image");
+      return;
+    }
+
+    elements.heroBg.style.setProperty("--hero-bg-image", "url(" + JSON.stringify(heroImage) + ")");
   }
 
   function getMoscowTimeFormatter() {

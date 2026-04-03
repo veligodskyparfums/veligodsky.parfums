@@ -29,8 +29,10 @@
     telegramDM: "https://t.me/veligodsky_ls",
     freeShippingThreshold: 8000,
     storeName: "VELIGODSKY.PARFUMS",
-    backupNoticeEnabled: true
+    backupNoticeEnabled: true,
+    heroImage: ""
   };
+  var MAX_SETTINGS_HERO_IMAGE_LENGTH = 900 * 1024;
 
   var defaultHomepageReviews = [
     {
@@ -246,6 +248,27 @@
     return placeholderImages[idx % placeholderImages.length];
   }
 
+  function normalizeSettingsHeroImage(value) {
+    var safe = String(value || "").trim();
+    if (!safe) {
+      return "";
+    }
+
+    if (safe.length > MAX_SETTINGS_HERO_IMAGE_LENGTH) {
+      return "";
+    }
+
+    if (/^https?:\/\/[^\s]+$/i.test(safe)) {
+      return safe;
+    }
+
+    if (/^data:image\/(?:jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(safe)) {
+      return safe;
+    }
+
+    return "";
+  }
+
   function normalizeVolume(volume) {
     if (!volume || typeof volume !== "object") {
       return null;
@@ -405,6 +428,7 @@
       delete settings.adminPassword;
     }
     settings.backupNoticeEnabled = toBoolean(settings.backupNoticeEnabled, defaults.settings.backupNoticeEnabled);
+    settings.heroImage = normalizeSettingsHeroImage(settings.heroImage);
 
     var products = Array.isArray(safe.products)
       ? safe.products.map(normalizeProduct).filter(Boolean)
@@ -923,6 +947,7 @@
     data.settings = Object.assign({}, data.settings, patch || {});
     data.settings.freeShippingThreshold = Math.max(0, Math.round(toNumber(data.settings.freeShippingThreshold, 8000)));
     data.settings.backupNoticeEnabled = toBoolean(data.settings.backupNoticeEnabled, true);
+    data.settings.heroImage = normalizeSettingsHeroImage(data.settings.heroImage);
     var saved = await commitData(data);
     return saved.settings;
   }

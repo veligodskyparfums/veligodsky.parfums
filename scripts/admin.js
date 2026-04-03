@@ -19,6 +19,7 @@
   var state = {
     editingId: null,
     imageData: "",
+    heroImageData: "",
     draftMemory: null,
     homepageReviewEditingId: null
   };
@@ -55,6 +56,9 @@
     elements.freeShippingInput = document.getElementById("freeShippingInput");
     elements.adminPasswordNewInput = document.getElementById("adminPasswordNewInput");
     elements.backupNoticeEnabledInput = document.getElementById("backupNoticeEnabledInput");
+    elements.heroImageInput = document.getElementById("heroImageInput");
+    elements.heroImagePreview = document.getElementById("heroImagePreview");
+    elements.heroImageClearBtn = document.getElementById("heroImageClearBtn");
 
     elements.perfumeForm = document.getElementById("perfumeForm");
     elements.editorTitle = document.getElementById("editorTitle");
@@ -90,6 +94,12 @@
     elements.logoutBtn.addEventListener("click", logout);
 
     elements.settingsForm.addEventListener("submit", saveSettings);
+    if (elements.heroImageInput) {
+      elements.heroImageInput.addEventListener("change", handleHeroImageUpload);
+    }
+    if (elements.heroImageClearBtn) {
+      elements.heroImageClearBtn.addEventListener("click", clearHeroImage);
+    }
 
     elements.addVolumeBtn.addEventListener("click", function () {
       appendVolumeRow();
@@ -271,6 +281,11 @@
     if (elements.backupNoticeEnabledInput) {
       elements.backupNoticeEnabledInput.checked = Boolean(settings.backupNoticeEnabled);
     }
+    state.heroImageData = String(settings.heroImage || "").trim();
+    setHeroPreviewImage(state.heroImageData);
+    if (elements.heroImageInput) {
+      elements.heroImageInput.value = "";
+    }
     elements.adminPasswordNewInput.value = "";
   }
 
@@ -289,7 +304,8 @@
       telegramChannel: channel,
       telegramDM: dm,
       freeShippingThreshold: freeShippingThreshold,
-      backupNoticeEnabled: backupNoticeEnabled
+      backupNoticeEnabled: backupNoticeEnabled,
+      heroImage: String(state.heroImageData || "").trim()
     };
 
     try {
@@ -312,6 +328,66 @@
       }
       showToast("Не удалось сохранить настройки на сервер.", true);
     }
+  }
+
+  async function handleHeroImageUpload() {
+    if (!elements.heroImageInput) {
+      return;
+    }
+
+    var file = elements.heroImageInput.files && elements.heroImageInput.files[0];
+    if (!file) {
+      return;
+    }
+
+    var fileType = String(file.type || "").toLowerCase();
+    if (!String(fileType).startsWith("image/")) {
+      showToast("Выберите файл изображения.", true);
+      elements.heroImageInput.value = "";
+      return;
+    }
+
+    if (fileType.indexOf("heic") >= 0 || fileType.indexOf("heif") >= 0) {
+      showToast("Формат HEIC/HEIF не поддерживается. Сохраните фото как JPG/PNG.", true);
+      elements.heroImageInput.value = "";
+      return;
+    }
+
+    if (file.size > MAX_UPLOAD_FILE_SIZE) {
+      showToast("Фото больше 12 МБ. Выберите файл поменьше.", true);
+      elements.heroImageInput.value = "";
+      return;
+    }
+
+    var previousHeroImageData = String(state.heroImageData || "");
+    try {
+      var optimized = await optimizeImageForStore(file);
+      if (!optimized || optimized.length > MAX_IMAGE_DATA_LENGTH) {
+        throw new Error("IMAGE_TOO_LARGE");
+      }
+
+      state.heroImageData = optimized;
+      setHeroPreviewImage(state.heroImageData);
+      showToast("Главное фото выбрано. Нажмите «Сохранить настройки».");
+    } catch (error) {
+      state.heroImageData = previousHeroImageData;
+      setHeroPreviewImage(previousHeroImageData);
+      elements.heroImageInput.value = "";
+      if (error && error.message === "IMAGE_TOO_LARGE") {
+        showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
+        return;
+      }
+      showToast("Не удалось обработать фото. Используйте JPG или PNG.", true);
+    }
+  }
+
+  function clearHeroImage() {
+    state.heroImageData = "";
+    if (elements.heroImageInput) {
+      elements.heroImageInput.value = "";
+    }
+    setHeroPreviewImage("");
+    showToast("Главное фото сброшено. Нажмите «Сохранить настройки».");
   }
 
   function createVolumeRow(volume) {
@@ -720,15 +796,26 @@
     }
   }
 
-  function setPreviewImage(src) {
-    var value = String(src || "").trim();
-    if (!value) {
-      elements.perfumeImagePreview.removeAttribute("src");
-      elements.perfumeImagePreview.classList.add("hidden");
+  function setImagePreview(imageElement, src) {
+    if (!imageElement) {
       return;
     }
-    elements.perfumeImagePreview.src = value;
-    elements.perfumeImagePreview.classList.remove("hidden");
+    var value = String(src || "").trim();
+    if (!value) {
+      imageElement.removeAttribute("src");
+      imageElement.classList.add("hidden");
+      return;
+    }
+    imageElement.src = value;
+    imageElement.classList.remove("hidden");
+  }
+
+  function setPreviewImage(src) {
+    setImagePreview(elements.perfumeImagePreview, src);
+  }
+
+  function setHeroPreviewImage(src) {
+    setImagePreview(elements.heroImagePreview, src);
   }
 
   async function savePerfume(event) {
