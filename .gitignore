@@ -1,0 +1,19 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Runtime and dependencies
+node_modules/
+
+# Local backups and dumps
+backups/
+*.dump
+
+# Local runtime data (contains mutable store state and admin password in fallback mode)
+data/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
