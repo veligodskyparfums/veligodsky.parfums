@@ -625,6 +625,18 @@
     }
 
     if (!response.ok) {
+      var errorCode = "";
+      try {
+        var payload = await response.json();
+        errorCode = String(payload && payload.error || "").trim();
+      } catch (error) {
+        errorCode = "";
+      }
+
+      if (errorCode) {
+        throw new Error(errorCode);
+      }
+
       throw new Error("HTTP " + response.status);
     }
 

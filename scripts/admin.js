@@ -308,22 +308,43 @@
       heroImage: String(state.heroImageData || "").trim()
     };
 
+    var passwordChanged = false;
     try {
-      await store.updateSettings(patch);
-
       if (newAdminPassword) {
         if (typeof store.changeAdminPassword !== "function") {
           throw new Error("PASSWORD_ENDPOINT_UNAVAILABLE");
         }
         await store.changeAdminPassword(newAdminPassword);
+        if (typeof store.loginAdmin === "function") {
+          await store.loginAdmin(newAdminPassword);
+        }
+        passwordChanged = true;
       }
 
+      await store.updateSettings(patch);
       elements.adminPasswordNewInput.value = "";
       showToast(newAdminPassword ? "Настройки и пароль сохранены" : "Настройки сохранены");
     } catch (error) {
+      var message = String(error && error.message || "");
+      if (message.indexOf("PASSWORD_TOO_SHORT") >= 0) {
+        showToast("Пароль слишком короткий. Минимум 6 символов.", true);
+        return;
+      }
+      if (message.indexOf("PASSWORD_TOO_LONG") >= 0) {
+        showToast("Пароль слишком длинный. Максимум 128 символов.", true);
+        return;
+      }
+      if (message.indexOf("PASSWORD_REQUIRED") >= 0) {
+        showToast("Введите новый пароль.", true);
+        return;
+      }
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
         logout();
         showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      if (passwordChanged) {
+        showToast("Пароль сохранен, но настройки не удалось сохранить.", true);
         return;
       }
       showToast("Не удалось сохранить настройки на сервер.", true);
