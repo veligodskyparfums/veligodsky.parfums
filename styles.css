@@ -1350,6 +1350,13 @@ body.menu-open .nav {
   gap: 10px;
 }
 
+#saveSettingsBtn {
+  justify-self: start;
+  align-self: start;
+  width: auto;
+  padding: 9px 16px;
+}
+
 .image-preview-wrap {
   border-radius: var(--radius-sm);
   border: 1px dashed rgba(255, 255, 255, 0.2);
