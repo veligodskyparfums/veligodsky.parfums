@@ -9,4 +9,3 @@
     clientErrorEndpoint: "/api/client-errors"
   }, window.VeligodskySiteConfig || {});
 })();
-yandexMetrikaId:108260239
