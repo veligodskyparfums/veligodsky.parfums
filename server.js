@@ -104,6 +104,25 @@ const CONTENT_TYPES = {
   ".ico": "image/x-icon"
 };
 
+const ALLOWED_STATIC_FILES = new Set([
+  "index.html",
+  "styles.css",
+  "favicon.svg",
+  "robots.txt",
+  "sitemap.xml",
+  "privacy.html",
+  "terms.html",
+  "returns.html",
+  "contacts.html",
+  "admin/index.html",
+  "scripts/common.js",
+  "scripts/app.js",
+  "scripts/admin.js",
+  "scripts/site-config.js",
+  "scripts/analytics.js",
+  "scripts/monitoring.js"
+]);
+
 const FALLBACK_DATA = {
   settings: {
     telegramChannel: "https://t.me/veligodsky_ls",
@@ -1397,6 +1416,35 @@ async function handleClientErrorsApi(req, res) {
   sendJson(res, 202, { ok: true });
 }
 
+function normalizePublicPath(filePath) {
+  return safeString(filePath).replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function isAllowedStaticFile(filePath) {
+  const normalized = normalizePublicPath(filePath);
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.startsWith(".") || normalized.includes("/.")) {
+    return false;
+  }
+  return ALLOWED_STATIC_FILES.has(normalized);
+}
+
+function applySecurityHeaders(res) {
+  if (!res || typeof res.setHeader !== "function") {
+    return;
+  }
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("X-XSS-Protection", "0");
+  if (isProduction()) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+  }
+}
+
 function getSafeFilePath(urlPathname) {
   let pathname = urlPathname;
 
@@ -1417,6 +1465,10 @@ function getSafeFilePath(urlPathname) {
   const relativeToRoot = path.relative(ROOT_DIR, absolutePath);
 
   if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+    return null;
+  }
+
+  if (!isAllowedStaticFile(relativeToRoot)) {
     return null;
   }
 
@@ -1453,6 +1505,8 @@ async function serveStaticFile(res, filePath) {
 
 async function requestHandler(req, res) {
   try {
+    applySecurityHeaders(res);
+
     const hostHeader = req.headers.host || "localhost:" + PORT;
     const requestUrl = new URL(req.url, "http://" + hostHeader);
 
