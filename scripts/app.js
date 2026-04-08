@@ -20,6 +20,7 @@
   var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
   var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
   var PRODUCT_REVIEW_PANELS_KEY = "veligodsky_product_review_panels_v1";
+  var REVIEW_PRIVACY_CONSENT_VERSION = "privacy-v1-2026-04-08";
 
   var state = {
     products: [],
@@ -930,6 +931,10 @@
       + "          <button class=\"btn btn-ghost\" type=\"button\" data-captcha-refresh>Обновить</button>"
       + "        </div>"
       + "      </div>"
+      + "      <label class=\"review-consent\">"
+      + "        <input type=\"checkbox\" name=\"consentAccepted\" required>"
+      + "        <span>Даю согласие на обработку персональных данных (<a href=\"/privacy.html\" target=\"_blank\" rel=\"noopener noreferrer\">Политика</a>).</span>"
+      + "      </label>"
       + "    </div>"
       + "    <div class=\"product-review-form-footer\">"
       + "      <small class=\"product-review-note\">Ссылки в отзыве запрещены. После отправки отзыв попадёт на модерацию.</small>"
@@ -1267,6 +1272,7 @@
       || String(state.homepageReviewDraft.city || "").trim()
       || String(state.homepageReviewDraft.text || "").trim()
       || String(state.homepageReviewDraft.photo || "").trim()
+      || Boolean(state.homepageReviewDraft.consentAccepted)
       || String(state.homepageReviewDraft.rating || "5") !== "5"
     );
   }
@@ -1291,19 +1297,22 @@
     var textInput = form.querySelector("[name=\"text\"]");
     var ratingInput = form.querySelector("[name=\"rating\"]");
     var photoInput = form.querySelector("[name=\"photo\"]");
+    var consentInput = form.querySelector("[name=\"consentAccepted\"]");
 
     var draft = {
       author: authorInput ? String(authorInput.value || "") : "",
       city: cityInput ? String(cityInput.value || "") : "",
       text: textInput ? String(textInput.value || "") : "",
       rating: ratingInput ? String(ratingInput.value || "5") : "5",
-      photo: photoInput ? String(photoInput.value || "") : ""
+      photo: photoInput ? String(photoInput.value || "") : "",
+      consentAccepted: Boolean(consentInput && consentInput.checked)
     };
 
     var isEmpty = !draft.author.trim()
       && !draft.city.trim()
       && !draft.text.trim()
       && !draft.photo.trim()
+      && !draft.consentAccepted
       && draft.rating === "5";
 
     if (isEmpty) {
@@ -1336,6 +1345,7 @@
     var textInput = form.querySelector("[name=\"text\"]");
     var ratingInput = form.querySelector("[name=\"rating\"]");
     var photoInput = form.querySelector("[name=\"photo\"]");
+    var consentInput = form.querySelector("[name=\"consentAccepted\"]");
 
     if (authorInput) {
       authorInput.value = draft.author || "";
@@ -1351,6 +1361,9 @@
     }
     if (photoInput) {
       photoInput.value = draft.photo || "";
+    }
+    if (consentInput) {
+      consentInput.checked = Boolean(draft.consentAccepted);
     }
     syncReviewPhotoPreview(form, draft.photo || "");
   }
@@ -1584,19 +1597,22 @@
     var textInput = form.querySelector("[name=\"text\"]");
     var ratingInput = form.querySelector("[name=\"rating\"]");
     var photoInput = form.querySelector("[name=\"photo\"]");
+    var consentInput = form.querySelector("[name=\"consentAccepted\"]");
 
     var draft = {
       author: authorInput ? String(authorInput.value || "") : "",
       city: cityInput ? String(cityInput.value || "") : "",
       text: textInput ? String(textInput.value || "") : "",
       rating: ratingInput ? String(ratingInput.value || "5") : "5",
-      photo: photoInput ? String(photoInput.value || "") : ""
+      photo: photoInput ? String(photoInput.value || "") : "",
+      consentAccepted: Boolean(consentInput && consentInput.checked)
     };
 
     var isEmpty = !draft.author.trim()
       && !draft.city.trim()
       && !draft.text.trim()
       && !draft.photo.trim()
+      && !draft.consentAccepted
       && draft.rating === "5";
 
     if (isEmpty) {
@@ -1634,6 +1650,7 @@
       var textInput = form.querySelector("[name=\"text\"]");
       var ratingInput = form.querySelector("[name=\"rating\"]");
       var photoInput = form.querySelector("[name=\"photo\"]");
+      var consentInput = form.querySelector("[name=\"consentAccepted\"]");
 
       if (authorInput) {
         authorInput.value = draft.author || "";
@@ -1649,6 +1666,9 @@
       }
       if (photoInput) {
         photoInput.value = draft.photo || "";
+      }
+      if (consentInput) {
+        consentInput.checked = Boolean(draft.consentAccepted);
       }
       syncReviewPhotoPreview(form, draft.photo || "");
       var reviewsSection = form.closest(".product-reviews");
@@ -1680,6 +1700,7 @@
     var website = String(formData.get("website") || "").trim();
     var captchaToken = String(formData.get("captchaToken") || "").trim();
     var captchaAnswer = String(formData.get("captchaAnswer") || "").trim();
+    var consentAccepted = formData.get("consentAccepted") !== null;
 
     if (!author || author.length < 2) {
       showToast("Укажите имя для отзыва.", true);
@@ -1694,6 +1715,10 @@
     if (!captchaToken || !captchaAnswer) {
       ensureReviewCaptcha(form, true);
       showToast("Решите капчу перед отправкой отзыва.", true);
+      return;
+    }
+    if (!consentAccepted) {
+      showToast("Нужно согласие на обработку персональных данных.", true);
       return;
     }
 
@@ -1711,7 +1736,9 @@
         photo: photo,
         website: website,
         captchaToken: captchaToken,
-        captchaAnswer: captchaAnswer
+        captchaAnswer: captchaAnswer,
+        consentAccepted: true,
+        consentVersion: REVIEW_PRIVACY_CONSENT_VERSION
       });
 
       delete state.reviewDrafts[productId];
@@ -1745,6 +1772,8 @@
         var validationCode = message.split(":")[1] || "";
         if (validationCode === "LINKS_NOT_ALLOWED") {
           showToast("Ссылки в отзывах запрещены.", true);
+        } else if (validationCode === "CONSENT_REQUIRED") {
+          showToast("Подтвердите согласие на обработку персональных данных.", true);
         } else if (validationCode === "CAPTCHA_REQUIRED" || validationCode === "CAPTCHA_INVALID" || validationCode === "CAPTCHA_EXPIRED" || validationCode === "CAPTCHA_TOO_FAST") {
           ensureReviewCaptcha(form, true);
           showToast("Капча не пройдена. Решите новый пример и отправьте ещё раз.", true);
@@ -1790,6 +1819,7 @@
     var website = String(formData.get("website") || "").trim();
     var captchaToken = String(formData.get("captchaToken") || "").trim();
     var captchaAnswer = String(formData.get("captchaAnswer") || "").trim();
+    var consentAccepted = formData.get("consentAccepted") !== null;
 
     if (!author || author.length < 2) {
       showToast("Укажите имя для отзыва.", true);
@@ -1804,6 +1834,10 @@
     if (!captchaToken || !captchaAnswer) {
       ensureReviewCaptcha(form, true);
       showToast("Решите капчу перед отправкой отзыва.", true);
+      return;
+    }
+    if (!consentAccepted) {
+      showToast("Нужно согласие на обработку персональных данных.", true);
       return;
     }
 
@@ -1821,7 +1855,9 @@
         photo: photo,
         website: website,
         captchaToken: captchaToken,
-        captchaAnswer: captchaAnswer
+        captchaAnswer: captchaAnswer,
+        consentAccepted: true,
+        consentVersion: REVIEW_PRIVACY_CONSENT_VERSION
       });
 
       state.homepageReviewDraft = null;
@@ -1854,6 +1890,8 @@
         var homepageValidationCode = message.split(":")[1] || "";
         if (homepageValidationCode === "LINKS_NOT_ALLOWED") {
           showToast("Ссылки в отзывах запрещены.", true);
+        } else if (homepageValidationCode === "CONSENT_REQUIRED") {
+          showToast("Подтвердите согласие на обработку персональных данных.", true);
         } else if (homepageValidationCode === "CAPTCHA_REQUIRED" || homepageValidationCode === "CAPTCHA_INVALID" || homepageValidationCode === "CAPTCHA_EXPIRED" || homepageValidationCode === "CAPTCHA_TOO_FAST") {
           ensureReviewCaptcha(form, true);
           showToast("Капча не пройдена. Решите новый пример и отправьте ещё раз.", true);

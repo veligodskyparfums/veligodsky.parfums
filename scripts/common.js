@@ -316,8 +316,32 @@
     }
 
     var maxTextLength = Math.max(80, Math.round(toNumber(safeOptions.maxTextLength, 500)));
+    var consentSource = review.consentProof && typeof review.consentProof === "object"
+      ? review.consentProof
+      : (review.consent && typeof review.consent === "object" ? review.consent : null);
+    var consentProof = null;
+    if (consentSource) {
+      var acceptedAtRaw = String(consentSource.acceptedAt || consentSource.createdAt || consentSource.grantedAt || "").trim();
+      var acceptedAt = "";
+      if (acceptedAtRaw) {
+        var parsedAcceptedAt = new Date(acceptedAtRaw);
+        if (!Number.isNaN(parsedAcceptedAt.getTime())) {
+          acceptedAt = parsedAcceptedAt.toISOString();
+        }
+      }
+      if (!acceptedAt) {
+        acceptedAt = createdAt;
+      }
 
-    return {
+      consentProof = {
+        acceptedAt: acceptedAt,
+        version: String(consentSource.version || "").trim().slice(0, 64),
+        form: String(consentSource.form || "").trim().slice(0, 48),
+        ip: String(consentSource.ip || "").trim().slice(0, 120)
+      };
+    }
+
+    var next = {
       id: String(review.id || uid(safeOptions.prefix || "r")),
       author: author.slice(0, 80),
       city: city.slice(0, 80),
@@ -326,6 +350,12 @@
       photo: String(review.photo || review.image || "").trim(),
       createdAt: createdAt
     };
+
+    if (consentProof) {
+      next.consentProof = consentProof;
+    }
+
+    return next;
   }
 
   function normalizeReviewList(reviews, options) {
@@ -847,7 +877,9 @@
       photo: String(reviewPayload && reviewPayload.photo || "").trim(),
       website: String(reviewPayload && reviewPayload.website || "").trim(),
       captchaToken: String(reviewPayload && reviewPayload.captchaToken || "").trim(),
-      captchaAnswer: String(reviewPayload && reviewPayload.captchaAnswer || "").trim()
+      captchaAnswer: String(reviewPayload && reviewPayload.captchaAnswer || "").trim(),
+      consentAccepted: Boolean(reviewPayload && reviewPayload.consentAccepted),
+      consentVersion: String(reviewPayload && reviewPayload.consentVersion || "").trim()
     };
 
     var response = await fetch(API_PRODUCT_REVIEWS_URL, {
@@ -899,7 +931,9 @@
       photo: String(reviewPayload && reviewPayload.photo || "").trim(),
       website: String(reviewPayload && reviewPayload.website || "").trim(),
       captchaToken: String(reviewPayload && reviewPayload.captchaToken || "").trim(),
-      captchaAnswer: String(reviewPayload && reviewPayload.captchaAnswer || "").trim()
+      captchaAnswer: String(reviewPayload && reviewPayload.captchaAnswer || "").trim(),
+      consentAccepted: Boolean(reviewPayload && reviewPayload.consentAccepted),
+      consentVersion: String(reviewPayload && reviewPayload.consentVersion || "").trim()
     };
 
     var response = await fetch(API_HOMEPAGE_REVIEWS_URL, {

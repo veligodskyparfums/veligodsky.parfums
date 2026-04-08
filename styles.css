@@ -729,6 +729,27 @@ body.menu-open .nav {
   font-size: 0.78rem;
 }
 
+.review-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.review-consent input[type="checkbox"] {
+  margin-top: 2px;
+  width: 15px;
+  height: 15px;
+  accent-color: #f6d27a;
+}
+
+.review-consent a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .product-review-form input:focus,
 .product-review-form select:focus,
 .product-review-form textarea:focus {
@@ -1546,6 +1567,14 @@ body.menu-open .nav {
 .admin-review-meta {
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.admin-review-consent {
+  color: rgba(246, 210, 122, 0.95);
+  font-size: 0.76rem;
+  margin-top: 2px;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .admin-review-rating {

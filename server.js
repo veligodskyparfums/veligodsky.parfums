@@ -32,6 +32,7 @@ const REVIEW_CAPTCHA_TTL_MS = 20 * 60 * 1000;
 const REVIEW_CAPTCHA_MIN_AGE_MS = 1500;
 const REVIEW_CAPTCHA_SECRET = crypto.randomBytes(32).toString("hex");
 const REVIEW_LINK_PATTERN = /(https?:\/\/|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/|\b))/i;
+const REVIEW_PRIVACY_CONSENT_VERSION = safeString(process.env.REVIEW_PRIVACY_CONSENT_VERSION || "privacy-v1-2026-04-08").slice(0, 64) || "privacy-v1-2026-04-08";
 const ADMIN_PASSWORD_HASH_PREFIX = "pbkdf2_sha256";
 const ADMIN_PASSWORD_HASH_ITERATIONS = 180000;
 const ADMIN_PASSWORD_HASH_BYTES = 32;
@@ -376,6 +377,14 @@ function normalizeIsoDate(value) {
   return parsed.toISOString();
 }
 
+function parseBooleanLike(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const safe = safeString(value).toLowerCase();
+  return safe === "1" || safe === "true" || safe === "yes" || safe === "on";
+}
+
 function containsLink(value) {
   return REVIEW_LINK_PATTERN.test(safeString(value));
 }
@@ -397,6 +406,24 @@ function sanitizeReviewPhoto(value) {
   return safe;
 }
 
+function normalizeReviewConsentProof(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const acceptedAt = normalizeIsoDate(raw.acceptedAt || raw.createdAt || raw.grantedAt);
+  const version = safeString(raw.version).slice(0, 64) || REVIEW_PRIVACY_CONSENT_VERSION;
+  const form = safeString(raw.form).slice(0, 48) || "review";
+  const ip = safeString(raw.ip).slice(0, 120);
+
+  return {
+    acceptedAt,
+    version,
+    form,
+    ip
+  };
+}
+
 function normalizeStoredReview(raw, prefix) {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -411,8 +438,9 @@ function normalizeStoredReview(raw, prefix) {
   const city = safeString(raw.city).slice(0, MAX_REVIEW_CITY_LENGTH);
   const rating = clampInteger(raw.rating, 1, 5, 5);
   const idPrefix = safeString(prefix) || "r";
+  const consentProof = normalizeReviewConsentProof(raw.consentProof || raw.consent);
 
-  return {
+  const next = {
     id: safeString(raw.id) || (idPrefix + "_" + crypto.randomBytes(6).toString("hex")),
     author,
     city,
@@ -421,6 +449,12 @@ function normalizeStoredReview(raw, prefix) {
     photo: sanitizeReviewPhoto(raw.photo || raw.image),
     createdAt: normalizeIsoDate(raw.createdAt)
   };
+
+  if (consentProof) {
+    next.consentProof = consentProof;
+  }
+
+  return next;
 }
 
 function normalizeStoredReviewList(rawReviews, prefix, maxItems) {
@@ -451,6 +485,8 @@ function parseIncomingReviewPayload(payload) {
   const website = safeString(payload.website).slice(0, 200);
   const captchaToken = safeString(payload.captchaToken).slice(0, 2048);
   const captchaAnswer = safeString(payload.captchaAnswer).slice(0, 32);
+  const consentAccepted = parseBooleanLike(payload.consentAccepted);
+  const consentVersion = safeString(payload.consentVersion).slice(0, 64) || REVIEW_PRIVACY_CONSENT_VERSION;
   const photo = sanitizeReviewPhoto(payload.photo || payload.image);
 
   if (website) {
@@ -466,6 +502,9 @@ function parseIncomingReviewPayload(payload) {
   if (containsLink(author) || containsLink(city) || containsLink(text)) {
     throw new Error("LINKS_NOT_ALLOWED");
   }
+  if (!consentAccepted) {
+    throw new Error("CONSENT_REQUIRED");
+  }
 
   return {
     author,
@@ -474,7 +513,9 @@ function parseIncomingReviewPayload(payload) {
     rating,
     photo,
     captchaToken,
-    captchaAnswer
+    captchaAnswer,
+    consentAccepted: true,
+    consentVersion
   };
 }
 
@@ -676,9 +717,25 @@ function sanitizePublicStoreData(data) {
     delete safe.settings.adminPassword;
   }
   delete safe.pendingHomepageReviews;
+  if (Array.isArray(safe.reviews)) {
+    safe.reviews = safe.reviews.map((review) => {
+      const nextReview = Object.assign({}, review);
+      delete nextReview.consentProof;
+      delete nextReview.consent;
+      return nextReview;
+    });
+  }
   safe.products = safe.products.map((product) => {
     const next = Object.assign({}, product);
     delete next.pendingReviews;
+    if (Array.isArray(next.reviews)) {
+      next.reviews = next.reviews.map((review) => {
+        const nextReview = Object.assign({}, review);
+        delete nextReview.consentProof;
+        delete nextReview.consent;
+        return nextReview;
+      });
+    }
     return next;
   });
   return safe;
@@ -1371,6 +1428,7 @@ async function handleProductReviewsApi(req, res) {
     sendJson(res, 400, { error: error.message || "CAPTCHA_INVALID" });
     return;
   }
+  const clientIp = getClientIp(req);
 
   try {
     await runSerializedStoreMutation(async () => {
@@ -1399,6 +1457,12 @@ async function handleProductReviewsApi(req, res) {
         text: incomingReview.text,
         rating: incomingReview.rating,
         photo: incomingReview.photo,
+        consentProof: {
+          acceptedAt: new Date().toISOString(),
+          version: incomingReview.consentVersion,
+          form: "product_review",
+          ip: clientIp
+        },
         createdAt: new Date().toISOString()
       }, "ppr");
 
@@ -1482,6 +1546,7 @@ async function handleHomepageReviewsApi(req, res) {
     sendJson(res, 400, { error: error.message || "CAPTCHA_INVALID" });
     return;
   }
+  const clientIp = getClientIp(req);
 
   await runSerializedStoreMutation(async () => {
     const currentData = await storeRepository.read();
@@ -1499,6 +1564,12 @@ async function handleHomepageReviewsApi(req, res) {
       text: incomingReview.text,
       rating: incomingReview.rating,
       photo: incomingReview.photo,
+      consentProof: {
+        acceptedAt: new Date().toISOString(),
+        version: incomingReview.consentVersion,
+        form: "homepage_review",
+        ip: clientIp
+      },
       createdAt: new Date().toISOString()
     }, "phr");
 

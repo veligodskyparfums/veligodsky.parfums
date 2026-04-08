@@ -1389,6 +1389,7 @@
               + "    <div>"
               + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
               + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
+              +        renderReviewConsentMeta(review)
               + "    </div>"
               + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
               + "  </div>"
@@ -1418,6 +1419,7 @@
               + "    <div>"
               + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
               + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
+              +        renderReviewConsentMeta(review)
               + "    </div>"
               + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
               + "  </div>"
@@ -1483,6 +1485,34 @@
       month: "2-digit",
       year: "numeric"
     });
+  }
+
+  function renderReviewConsentMeta(review) {
+    var proof = review && review.consentProof && typeof review.consentProof === "object"
+      ? review.consentProof
+      : null;
+    if (!proof) {
+      return "<div class=\"admin-review-consent\">Согласие: не зафиксировано</div>";
+    }
+
+    var acceptedAt = formatReviewDate(proof.acceptedAt);
+    var version = String(proof.version || "").trim();
+    var ip = String(proof.ip || "").trim();
+    var parts = [];
+
+    if (acceptedAt) {
+      parts.push("Согласие: " + escapeHtml(acceptedAt));
+    } else {
+      parts.push("Согласие: зафиксировано");
+    }
+    if (version) {
+      parts.push("версия " + escapeHtml(version));
+    }
+    if (ip) {
+      parts.push("IP " + escapeHtml(ip));
+    }
+
+    return "<div class=\"admin-review-consent\">" + parts.join(" • ") + "</div>";
   }
 
   function resetHomepageReviewEditor() {
@@ -1568,6 +1598,12 @@
       });
       if (existing && existing.createdAt) {
         payload.createdAt = existing.createdAt;
+      }
+      if (existing && existing.photo) {
+        payload.photo = existing.photo;
+      }
+      if (existing && existing.consentProof) {
+        payload.consentProof = existing.consentProof;
       }
       reviews = reviews.map(function (item) {
         return String(item.id) === reviewId ? payload : item;
@@ -1748,6 +1784,7 @@
         + "    <div>"
         + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
         + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
+        +        renderReviewConsentMeta(review)
         + "    </div>"
         + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
         + "  </div>"
