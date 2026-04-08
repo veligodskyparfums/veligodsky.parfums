@@ -32,6 +32,11 @@ const REVIEW_CAPTCHA_TTL_MS = 20 * 60 * 1000;
 const REVIEW_CAPTCHA_MIN_AGE_MS = 1500;
 const REVIEW_CAPTCHA_SECRET = crypto.randomBytes(32).toString("hex");
 const REVIEW_LINK_PATTERN = /(https?:\/\/|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/|\b))/i;
+const ADMIN_PASSWORD_HASH_PREFIX = "pbkdf2_sha256";
+const ADMIN_PASSWORD_HASH_ITERATIONS = 180000;
+const ADMIN_PASSWORD_HASH_BYTES = 32;
+const ADMIN_PASSWORD_SALT_BYTES = 16;
+const ADMIN_PASSWORD_HASH_DIGEST = "sha256";
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -563,6 +568,99 @@ function verifyReviewCaptcha(token, answer) {
   }
 }
 
+function hashAdminPassword(password) {
+  const safePassword = safeString(password);
+  const salt = crypto.randomBytes(ADMIN_PASSWORD_SALT_BYTES);
+  const hash = crypto.pbkdf2Sync(
+    safePassword,
+    salt,
+    ADMIN_PASSWORD_HASH_ITERATIONS,
+    ADMIN_PASSWORD_HASH_BYTES,
+    ADMIN_PASSWORD_HASH_DIGEST
+  );
+
+  return [
+    ADMIN_PASSWORD_HASH_PREFIX,
+    String(ADMIN_PASSWORD_HASH_ITERATIONS),
+    salt.toString("base64url"),
+    hash.toString("base64url")
+  ].join("$");
+}
+
+function parseAdminPasswordHash(value) {
+  const safeValue = safeString(value);
+  if (!safeValue) {
+    return null;
+  }
+
+  const parts = safeValue.split("$");
+  if (parts.length !== 4) {
+    return null;
+  }
+  if (parts[0] !== ADMIN_PASSWORD_HASH_PREFIX) {
+    return null;
+  }
+
+  const iterations = Number(parts[1]);
+  if (!Number.isFinite(iterations) || iterations < 50000 || iterations > 2000000) {
+    return null;
+  }
+
+  let salt;
+  let hash;
+  try {
+    salt = Buffer.from(parts[2], "base64url");
+    hash = Buffer.from(parts[3], "base64url");
+  } catch (error) {
+    return null;
+  }
+
+  if (!salt.length || !hash.length) {
+    return null;
+  }
+
+  return {
+    iterations,
+    salt,
+    hash
+  };
+}
+
+function isAdminPasswordHash(value) {
+  return Boolean(parseAdminPasswordHash(value));
+}
+
+function verifyAdminPassword(candidatePassword, storedPassword) {
+  const safeCandidate = safeString(candidatePassword);
+  const safeStored = safeString(storedPassword);
+  const parsed = parseAdminPasswordHash(safeStored);
+
+  if (!parsed) {
+    return safeCompareStrings(safeCandidate, safeStored);
+  }
+
+  const candidateHash = crypto.pbkdf2Sync(
+    safeCandidate,
+    parsed.salt,
+    parsed.iterations,
+    parsed.hash.length,
+    ADMIN_PASSWORD_HASH_DIGEST
+  );
+
+  return safeCompareStrings(candidateHash.toString("base64url"), parsed.hash.toString("base64url"));
+}
+
+function normalizePersistedAdminPassword(value) {
+  const safeValue = safeString(value);
+  if (!safeValue) {
+    return hashAdminPassword(safeString(FALLBACK_DATA.settings.adminPassword || "admin123"));
+  }
+  if (isAdminPasswordHash(safeValue)) {
+    return safeValue;
+  }
+  return hashAdminPassword(safeValue);
+}
+
 function readAdminPassword(data) {
   const fromData = safeString(data && data.settings && data.settings.adminPassword);
   if (fromData) {
@@ -604,7 +702,7 @@ function getStoreDataForRequest(req, data) {
 function ensureIncomingAdminPassword(payload, currentData) {
   const next = cloneData(validateStoreData(payload));
   const currentPassword = readAdminPassword(currentData);
-  next.settings.adminPassword = currentPassword;
+  next.settings.adminPassword = normalizePersistedAdminPassword(currentPassword);
   return next;
 }
 
@@ -1102,7 +1200,7 @@ async function handleAdminAuthApi(req, res) {
 
   const currentData = await storeRepository.read();
   const currentPassword = readAdminPassword(currentData);
-  if (!safeCompareStrings(password, currentPassword)) {
+  if (!verifyAdminPassword(password, currentPassword)) {
     const failedState = registerFailedAdminLogin(clientIp);
     if (failedState.blocked) {
       res.setHeader("Retry-After", String(failedState.retryAfterSec));
@@ -1118,6 +1216,16 @@ async function handleAdminAuthApi(req, res) {
       attemptsLeft: Math.max(0, ADMIN_BRUTE_FORCE_MAX_ATTEMPTS - failedState.attempts)
     });
     return;
+  }
+
+  if (!isAdminPasswordHash(currentPassword)) {
+    try {
+      const migratedData = cloneData(validateStoreData(currentData));
+      migratedData.settings.adminPassword = hashAdminPassword(password);
+      await storeRepository.write(migratedData);
+    } catch (error) {
+      console.error("Failed to migrate admin password to hashed format:", error);
+    }
   }
 
   clearFailedAdminLogins(clientIp);
@@ -1182,7 +1290,7 @@ async function handleAdminPasswordApi(req, res) {
 
   const currentData = await storeRepository.read();
   const nextData = cloneData(validateStoreData(currentData));
-  nextData.settings.adminPassword = newPassword;
+  nextData.settings.adminPassword = hashAdminPassword(newPassword);
   await storeRepository.write(nextData);
 
   revokeAdminSessions(getBearerToken(req));
