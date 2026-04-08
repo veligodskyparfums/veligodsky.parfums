@@ -144,6 +144,7 @@ const FALLBACK_DATA = {
 let storeRepository = null;
 let httpServer = null;
 let shuttingDown = false;
+let storeMutationQueue = Promise.resolve();
 const adminSessions = new Map();
 const rateLimitBuckets = new Map();
 let rateLimitLastCleanupAt = 0;
@@ -1092,6 +1093,20 @@ function readRequestBody(req) {
   });
 }
 
+function runSerializedStoreMutation(task) {
+  const runTask = async () => {
+    return task();
+  };
+
+  const next = storeMutationQueue.then(runTask, runTask);
+  storeMutationQueue = next.then(
+    () => undefined,
+    () => undefined
+  );
+
+  return next;
+}
+
 async function handleStoreApi(req, res) {
   if (!storeRepository) {
     sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
@@ -1130,9 +1145,11 @@ async function handleStoreApi(req, res) {
     }
 
     try {
-      const currentData = await storeRepository.read();
-      const nextPayload = ensureIncomingAdminPassword(parsed, currentData);
-      const saved = await storeRepository.write(nextPayload);
+      const saved = await runSerializedStoreMutation(async () => {
+        const currentData = await storeRepository.read();
+        const nextPayload = ensureIncomingAdminPassword(parsed, currentData);
+        return storeRepository.write(nextPayload);
+      });
 
       sendJson(res, 200, getStoreDataForRequest(req, saved));
     } catch (error) {
@@ -1220,9 +1237,19 @@ async function handleAdminAuthApi(req, res) {
 
   if (!isAdminPasswordHash(currentPassword)) {
     try {
-      const migratedData = cloneData(validateStoreData(currentData));
-      migratedData.settings.adminPassword = hashAdminPassword(password);
-      await storeRepository.write(migratedData);
+      await runSerializedStoreMutation(async () => {
+        const latestData = await storeRepository.read();
+        const latestPassword = readAdminPassword(latestData);
+        if (isAdminPasswordHash(latestPassword)) {
+          return;
+        }
+        if (!safeCompareStrings(latestPassword, password)) {
+          return;
+        }
+        const migratedData = cloneData(validateStoreData(latestData));
+        migratedData.settings.adminPassword = hashAdminPassword(password);
+        await storeRepository.write(migratedData);
+      });
     } catch (error) {
       console.error("Failed to migrate admin password to hashed format:", error);
     }
@@ -1288,10 +1315,12 @@ async function handleAdminPasswordApi(req, res) {
     return;
   }
 
-  const currentData = await storeRepository.read();
-  const nextData = cloneData(validateStoreData(currentData));
-  nextData.settings.adminPassword = hashAdminPassword(newPassword);
-  await storeRepository.write(nextData);
+  await runSerializedStoreMutation(async () => {
+    const currentData = await storeRepository.read();
+    const nextData = cloneData(validateStoreData(currentData));
+    nextData.settings.adminPassword = hashAdminPassword(newPassword);
+    await storeRepository.write(nextData);
+  });
 
   revokeAdminSessions(getBearerToken(req));
   sendJson(res, 200, { ok: true });
@@ -1343,44 +1372,53 @@ async function handleProductReviewsApi(req, res) {
     return;
   }
 
-  const currentData = await storeRepository.read();
-  const nextData = cloneData(validateStoreData(currentData));
+  try {
+    await runSerializedStoreMutation(async () => {
+      const currentData = await storeRepository.read();
+      const nextData = cloneData(validateStoreData(currentData));
 
-  const productIndex = nextData.products.findIndex((product) => {
-    return safeString(product && product.id) === incomingReview.productId;
-  });
+      const productIndex = nextData.products.findIndex((product) => {
+        return safeString(product && product.id) === incomingReview.productId;
+      });
 
-  if (productIndex < 0) {
-    sendJson(res, 404, { error: "PRODUCT_NOT_FOUND" });
-    return;
+      if (productIndex < 0) {
+        throw new Error("PRODUCT_NOT_FOUND");
+      }
+
+      const targetProduct = Object.assign({}, nextData.products[productIndex]);
+      const pendingReviews = normalizeStoredReviewList(
+        targetProduct.pendingReviews,
+        "ppr",
+        MAX_PENDING_PRODUCT_REVIEWS_PER_PRODUCT
+      );
+
+      const newReview = normalizeStoredReview({
+        id: "ppr_" + crypto.randomBytes(6).toString("hex"),
+        author: incomingReview.author,
+        city: incomingReview.city,
+        text: incomingReview.text,
+        rating: incomingReview.rating,
+        photo: incomingReview.photo,
+        createdAt: new Date().toISOString()
+      }, "ppr");
+
+      pendingReviews.unshift(newReview);
+      targetProduct.pendingReviews = normalizeStoredReviewList(
+        pendingReviews,
+        "ppr",
+        MAX_PENDING_PRODUCT_REVIEWS_PER_PRODUCT
+      );
+      nextData.products[productIndex] = targetProduct;
+
+      await storeRepository.write(nextData);
+    });
+  } catch (error) {
+    if (error && error.message === "PRODUCT_NOT_FOUND") {
+      sendJson(res, 404, { error: "PRODUCT_NOT_FOUND" });
+      return;
+    }
+    throw error;
   }
-
-  const targetProduct = Object.assign({}, nextData.products[productIndex]);
-  const pendingReviews = normalizeStoredReviewList(
-    targetProduct.pendingReviews,
-    "ppr",
-    MAX_PENDING_PRODUCT_REVIEWS_PER_PRODUCT
-  );
-
-  const newReview = normalizeStoredReview({
-    id: "ppr_" + crypto.randomBytes(6).toString("hex"),
-    author: incomingReview.author,
-    city: incomingReview.city,
-    text: incomingReview.text,
-    rating: incomingReview.rating,
-    photo: incomingReview.photo,
-    createdAt: new Date().toISOString()
-  }, "ppr");
-
-  pendingReviews.unshift(newReview);
-  targetProduct.pendingReviews = normalizeStoredReviewList(
-    pendingReviews,
-    "ppr",
-    MAX_PENDING_PRODUCT_REVIEWS_PER_PRODUCT
-  );
-  nextData.products[productIndex] = targetProduct;
-
-  await storeRepository.write(nextData);
 
   sendJson(res, 202, {
     ok: true,
@@ -1445,32 +1483,34 @@ async function handleHomepageReviewsApi(req, res) {
     return;
   }
 
-  const currentData = await storeRepository.read();
-  const nextData = cloneData(validateStoreData(currentData));
-  const pendingReviews = normalizeStoredReviewList(
-    nextData.pendingHomepageReviews,
-    "phr",
-    MAX_PENDING_HOMEPAGE_REVIEWS
-  );
+  await runSerializedStoreMutation(async () => {
+    const currentData = await storeRepository.read();
+    const nextData = cloneData(validateStoreData(currentData));
+    const pendingReviews = normalizeStoredReviewList(
+      nextData.pendingHomepageReviews,
+      "phr",
+      MAX_PENDING_HOMEPAGE_REVIEWS
+    );
 
-  const newReview = normalizeStoredReview({
-    id: "phr_" + crypto.randomBytes(6).toString("hex"),
-    author: incomingReview.author,
-    city: incomingReview.city,
-    text: incomingReview.text,
-    rating: incomingReview.rating,
-    photo: incomingReview.photo,
-    createdAt: new Date().toISOString()
-  }, "phr");
+    const newReview = normalizeStoredReview({
+      id: "phr_" + crypto.randomBytes(6).toString("hex"),
+      author: incomingReview.author,
+      city: incomingReview.city,
+      text: incomingReview.text,
+      rating: incomingReview.rating,
+      photo: incomingReview.photo,
+      createdAt: new Date().toISOString()
+    }, "phr");
 
-  pendingReviews.unshift(newReview);
-  nextData.pendingHomepageReviews = normalizeStoredReviewList(
-    pendingReviews,
-    "phr",
-    MAX_PENDING_HOMEPAGE_REVIEWS
-  );
+    pendingReviews.unshift(newReview);
+    nextData.pendingHomepageReviews = normalizeStoredReviewList(
+      pendingReviews,
+      "phr",
+      MAX_PENDING_HOMEPAGE_REVIEWS
+    );
 
-  await storeRepository.write(nextData);
+    await storeRepository.write(nextData);
+  });
 
   sendJson(res, 202, {
     ok: true,
