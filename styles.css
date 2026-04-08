@@ -1328,6 +1328,69 @@ body.menu-open .nav {
   gap: 8px;
 }
 
+.admin-capacity-monitor {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(139, 216, 139, 0.35);
+  background: linear-gradient(170deg, rgba(42, 89, 52, 0.25), rgba(8, 18, 10, 0.65));
+}
+
+.admin-capacity-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.admin-capacity-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #65d26e;
+  box-shadow: 0 0 0 6px rgba(101, 210, 110, 0.16);
+}
+
+.admin-capacity-status {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.admin-capacity-meta {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.admin-capacity-refresh {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  font-size: 0.92rem;
+}
+
+.admin-capacity-monitor.admin-capacity-warning {
+  border-color: rgba(250, 202, 87, 0.45);
+  background: linear-gradient(170deg, rgba(120, 92, 26, 0.28), rgba(22, 14, 5, 0.68));
+}
+
+.admin-capacity-monitor.admin-capacity-warning .admin-capacity-dot {
+  background: #f4cc58;
+  box-shadow: 0 0 0 6px rgba(244, 204, 88, 0.16);
+}
+
+.admin-capacity-monitor.admin-capacity-critical {
+  border-color: rgba(255, 114, 114, 0.5);
+  background: linear-gradient(170deg, rgba(118, 25, 25, 0.3), rgba(26, 5, 5, 0.7));
+}
+
+.admin-capacity-monitor.admin-capacity-critical .admin-capacity-dot {
+  background: #ff7878;
+  box-shadow: 0 0 0 6px rgba(255, 120, 120, 0.2);
+}
+
 .admin-section {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-md);
@@ -1690,6 +1753,15 @@ body.menu-open .nav {
 }
 
 @media (max-width: 600px) {
+  .admin-capacity-monitor {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .admin-capacity-refresh {
+    align-self: flex-start;
+  }
+
   .reviews-carousel {
     grid-template-columns: 1fr;
   }

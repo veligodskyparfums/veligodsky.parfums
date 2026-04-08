@@ -15,13 +15,28 @@
   var MIN_IMAGE_DIMENSION = 500;
   var IMAGE_QUALITY_START = 0.82;
   var IMAGE_QUALITY_MIN = 0.5;
+  var CAPACITY_CHECK_INTERVAL_MS = 30 * 1000;
+  var CAPACITY_REQUEST_TIMEOUT_MS = 8 * 1000;
+  var CAPACITY_HISTORY_LIMIT = 10;
+  var CAPACITY_TOAST_COOLDOWN_MS = 3 * 60 * 1000;
+  var CAPACITY_WARNING_HEALTH_MS = 800;
+  var CAPACITY_WARNING_STORE_MS = 1300;
+  var CAPACITY_CRITICAL_HEALTH_MS = 1800;
+  var CAPACITY_CRITICAL_STORE_MS = 2600;
 
   var state = {
     editingId: null,
     imageData: "",
     heroImageData: "",
     draftMemory: null,
-    homepageReviewEditingId: null
+    homepageReviewEditingId: null,
+    capacityMonitor: {
+      timerId: null,
+      inFlight: false,
+      history: [],
+      lastLevel: "ok",
+      lastToastAt: 0
+    }
   };
 
   var elements = {};
@@ -87,6 +102,10 @@
     elements.adminPendingHomepageReviewsList = document.getElementById("adminPendingHomepageReviewsList");
     elements.adminHomepageReviewsList = document.getElementById("adminHomepageReviewsList");
     elements.toast = document.getElementById("adminToast");
+    elements.capacityMonitor = null;
+    elements.capacityStatus = null;
+    elements.capacityMeta = null;
+    elements.capacityRefreshBtn = null;
   }
 
   function bindEvents() {
@@ -182,10 +201,13 @@
   function openPanel() {
     elements.loginView.classList.add("hidden");
     elements.panelView.classList.remove("hidden");
+    ensureCapacityMonitorElements();
+    startCapacityMonitor();
     refreshPanelFromServer(false);
   }
 
   function openLogin() {
+    stopCapacityMonitor();
     elements.panelView.classList.add("hidden");
     elements.loginView.classList.remove("hidden");
     elements.passwordInput.value = "";
@@ -1765,6 +1787,257 @@
     }
 
     elements.adminHomepageReviewsList.innerHTML = renderHomepageReviewCards(published, false);
+  }
+
+  function ensureCapacityMonitorElements() {
+    if (elements.capacityMonitor) {
+      return;
+    }
+    if (!elements.panelView) {
+      return;
+    }
+
+    var topbar = elements.panelView.querySelector(".admin-topbar");
+    if (!topbar) {
+      return;
+    }
+
+    var monitor = document.createElement("section");
+    monitor.className = "admin-capacity-monitor admin-capacity-ok";
+    monitor.innerHTML = ""
+      + "<div class=\"admin-capacity-main\">"
+      + "  <span class=\"admin-capacity-dot\" aria-hidden=\"true\"></span>"
+      + "  <strong class=\"admin-capacity-status\" data-capacity-status>Емкость: стабильно</strong>"
+      + "  <span class=\"admin-capacity-meta\" data-capacity-meta>Идет первая проверка...</span>"
+      + "</div>"
+      + "<button class=\"btn btn-ghost admin-capacity-refresh\" type=\"button\" data-capacity-refresh>Проверить сейчас</button>";
+
+    topbar.insertAdjacentElement("afterend", monitor);
+
+    elements.capacityMonitor = monitor;
+    elements.capacityStatus = monitor.querySelector("[data-capacity-status]");
+    elements.capacityMeta = monitor.querySelector("[data-capacity-meta]");
+    elements.capacityRefreshBtn = monitor.querySelector("[data-capacity-refresh]");
+
+    if (elements.capacityRefreshBtn) {
+      elements.capacityRefreshBtn.addEventListener("click", function () {
+        runCapacityCheck(true);
+      });
+    }
+  }
+
+  function getCapacityLevelPriority(level) {
+    if (level === "critical") {
+      return 2;
+    }
+    if (level === "warning") {
+      return 1;
+    }
+    return 0;
+  }
+
+  function formatCapacityProbe(probe) {
+    if (!probe) {
+      return "n/a";
+    }
+    if (!probe.ok) {
+      if (probe.status) {
+        return "ошибка HTTP " + probe.status;
+      }
+      return "ошибка сети";
+    }
+    return Math.round(Number(probe.elapsedMs) || 0) + " мс";
+  }
+
+  function getCapacityUiData(level) {
+    if (level === "critical") {
+      return {
+        className: "admin-capacity-critical",
+        status: "Емкость: перегрузка или отказ",
+        toast: "Емкость просела: есть ошибки или сильные задержки. Проверьте логи и трафик.",
+        isError: true
+      };
+    }
+    if (level === "warning") {
+      return {
+        className: "admin-capacity-warning",
+        status: "Емкость: есть замедления",
+        toast: "Емкость снижается: сервер отвечает медленнее обычного.",
+        isError: false
+      };
+    }
+    return {
+      className: "admin-capacity-ok",
+      status: "Емкость: стабильно",
+      toast: "Емкость восстановилась.",
+      isError: false
+    };
+  }
+
+  async function fetchWithTimeout(url, timeoutMs) {
+    var controller = typeof AbortController === "function" ? new AbortController() : null;
+    var timeoutId = null;
+
+    if (controller) {
+      timeoutId = setTimeout(function () {
+        controller.abort();
+      }, timeoutMs);
+    }
+
+    try {
+      return await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          "Accept": "application/json"
+        },
+        signal: controller ? controller.signal : undefined
+      });
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  async function probeCapacityEndpoint(url) {
+    var startedAt = Date.now();
+    try {
+      var response = await fetchWithTimeout(url, CAPACITY_REQUEST_TIMEOUT_MS);
+      return {
+        ok: response.ok,
+        status: response.status,
+        elapsedMs: Date.now() - startedAt
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        status: 0,
+        elapsedMs: Date.now() - startedAt,
+        message: String(error && error.message || "NETWORK_ERROR")
+      };
+    }
+  }
+
+  function applyCapacityUi(level, payload) {
+    if (!elements.capacityMonitor || !elements.capacityStatus || !elements.capacityMeta) {
+      return;
+    }
+
+    var uiData = getCapacityUiData(level);
+    elements.capacityMonitor.classList.remove("admin-capacity-ok", "admin-capacity-warning", "admin-capacity-critical");
+    elements.capacityMonitor.classList.add(uiData.className);
+    elements.capacityStatus.textContent = uiData.status;
+    elements.capacityMeta.textContent = payload;
+  }
+
+  function stopCapacityMonitor() {
+    if (state.capacityMonitor.timerId) {
+      clearInterval(state.capacityMonitor.timerId);
+      state.capacityMonitor.timerId = null;
+    }
+    state.capacityMonitor.inFlight = false;
+  }
+
+  function startCapacityMonitor() {
+    stopCapacityMonitor();
+    runCapacityCheck(false);
+    state.capacityMonitor.timerId = setInterval(function () {
+      runCapacityCheck(false);
+    }, CAPACITY_CHECK_INTERVAL_MS);
+  }
+
+  async function runCapacityCheck(isManual) {
+    if (!elements.panelView || elements.panelView.classList.contains("hidden")) {
+      return;
+    }
+    if (!isAuthenticated()) {
+      return;
+    }
+    if (state.capacityMonitor.inFlight) {
+      return;
+    }
+
+    ensureCapacityMonitorElements();
+    state.capacityMonitor.inFlight = true;
+
+    try {
+      var healthProbe = await probeCapacityEndpoint("/health?ts=" + Date.now());
+      var storeProbe = await probeCapacityEndpoint("/api/store-data?ts=" + Date.now());
+
+      var sample = {
+        healthOk: Boolean(healthProbe.ok),
+        storeOk: Boolean(storeProbe.ok)
+      };
+      state.capacityMonitor.history.push(sample);
+      if (state.capacityMonitor.history.length > CAPACITY_HISTORY_LIMIT) {
+        state.capacityMonitor.history.shift();
+      }
+
+      var failures = state.capacityMonitor.history.filter(function (item) {
+        return !item.healthOk || !item.storeOk;
+      }).length;
+      var samplesCount = state.capacityMonitor.history.length;
+
+      var level = "ok";
+      if (!healthProbe.ok || !storeProbe.ok) {
+        level = "critical";
+      } else if (
+        healthProbe.elapsedMs >= CAPACITY_CRITICAL_HEALTH_MS
+        || storeProbe.elapsedMs >= CAPACITY_CRITICAL_STORE_MS
+      ) {
+        level = "critical";
+      } else if (
+        healthProbe.elapsedMs >= CAPACITY_WARNING_HEALTH_MS
+        || storeProbe.elapsedMs >= CAPACITY_WARNING_STORE_MS
+      ) {
+        level = "warning";
+      } else if (samplesCount >= 4 && failures >= 2) {
+        level = "warning";
+      }
+
+      var checkedAt = new Date();
+      var checkedLabel = checkedAt.toLocaleTimeString("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+      var payload = ""
+        + "health: " + formatCapacityProbe(healthProbe)
+        + " · store-data: " + formatCapacityProbe(storeProbe)
+        + " · ошибки: " + failures + "/" + samplesCount
+        + " · " + checkedLabel;
+
+      applyCapacityUi(level, payload);
+
+      var uiData = getCapacityUiData(level);
+      var previousLevel = state.capacityMonitor.lastLevel;
+      var now = Date.now();
+      var shouldNotify = false;
+
+      if (isManual) {
+        showToast(uiData.status + ". " + payload, uiData.isError);
+      } else if (level === "ok" && previousLevel !== "ok") {
+        shouldNotify = true;
+      } else if (level !== "ok") {
+        if (getCapacityLevelPriority(level) > getCapacityLevelPriority(previousLevel)) {
+          shouldNotify = true;
+        } else if (now - state.capacityMonitor.lastToastAt >= CAPACITY_TOAST_COOLDOWN_MS) {
+          shouldNotify = true;
+        }
+      }
+
+      if (shouldNotify) {
+        showToast(uiData.toast, uiData.isError);
+      }
+
+      if (level !== "ok" && (shouldNotify || isManual)) {
+        state.capacityMonitor.lastToastAt = now;
+      }
+      state.capacityMonitor.lastLevel = level;
+    } finally {
+      state.capacityMonitor.inFlight = false;
+    }
   }
 
   function showToast(message, isError) {
