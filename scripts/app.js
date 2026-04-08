@@ -19,6 +19,7 @@
   var REVIEWS_COLLAPSED_KEY = "veligodsky_reviews_collapsed_v1";
   var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
   var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
+  var PRODUCT_REVIEW_PANELS_KEY = "veligodsky_product_review_panels_v1";
 
   var state = {
     products: [],
@@ -27,7 +28,7 @@
     visibleCount: 8,
     activeTab: "week",
     lastReviewInteractionAt: 0,
-    productReviewPanels: {},
+    productReviewPanels: readStoredProductReviewPanels(),
     homepageReviewDraft: readStoredHomepageReviewDraft(),
     reviewDrafts: readStoredProductReviewDrafts()
   };
@@ -43,6 +44,7 @@
     init().catch(function () {
       state.products = store.getProducts();
       state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
+      syncProductReviewPanelsWithProducts();
       bindEvents();
       syncSettingsToUI();
       renderHomepageReviews();
@@ -67,6 +69,7 @@
     }
     state.products = store.getProducts();
     state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
+    syncProductReviewPanelsWithProducts();
 
     bindEvents();
     syncSettingsToUI();
@@ -346,6 +349,7 @@
 
     state.products = store.getProducts();
     state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
+    syncProductReviewPanelsWithProducts();
     syncSettingsToUI();
     renderHomepageReviews();
     renderBrandFilter();
@@ -1095,8 +1099,66 @@
     }
   }
 
+  function syncProductReviewPanelsWithProducts() {
+    if (!state.productReviewPanels || typeof state.productReviewPanels !== "object" || Array.isArray(state.productReviewPanels)) {
+      state.productReviewPanels = {};
+      persistProductReviewPanels();
+      return;
+    }
+
+    var allowed = {};
+    (Array.isArray(state.products) ? state.products : []).forEach(function (product) {
+      var id = String(product && product.id || "").trim();
+      if (id) {
+        allowed[id] = true;
+      }
+    });
+
+    var changed = false;
+    Object.keys(state.productReviewPanels).forEach(function (key) {
+      if (!allowed[key]) {
+        delete state.productReviewPanels[key];
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      persistProductReviewPanels();
+    }
+  }
+
   function isProductReviewPanelExpanded(productId) {
     return Boolean(state.productReviewPanels && state.productReviewPanels[String(productId || "")]);
+  }
+
+  function persistProductReviewPanels() {
+    try {
+      var source = state.productReviewPanels;
+      if (!source || typeof source !== "object" || Array.isArray(source)) {
+        localStorage.removeItem(PRODUCT_REVIEW_PANELS_KEY);
+        return;
+      }
+
+      var normalized = {};
+      Object.keys(source).forEach(function (key) {
+        var safeKey = String(key || "").trim();
+        if (!safeKey) {
+          return;
+        }
+        if (source[key]) {
+          normalized[safeKey] = true;
+        }
+      });
+
+      if (!Object.keys(normalized).length) {
+        localStorage.removeItem(PRODUCT_REVIEW_PANELS_KEY);
+        return;
+      }
+
+      localStorage.setItem(PRODUCT_REVIEW_PANELS_KEY, JSON.stringify(normalized));
+    } catch (error) {
+      return;
+    }
   }
 
   function setProductReviewPanelState(productId, expanded) {
@@ -1113,6 +1175,37 @@
       state.productReviewPanels[safeId] = true;
     } else {
       delete state.productReviewPanels[safeId];
+    }
+
+    persistProductReviewPanels();
+  }
+
+  function readStoredProductReviewPanels() {
+    try {
+      var raw = localStorage.getItem(PRODUCT_REVIEW_PANELS_KEY);
+      if (!raw) {
+        return {};
+      }
+
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return {};
+      }
+
+      var normalized = {};
+      Object.keys(parsed).forEach(function (key) {
+        var safeKey = String(key || "").trim();
+        if (!safeKey) {
+          return;
+        }
+        if (parsed[key]) {
+          normalized[safeKey] = true;
+        }
+      });
+
+      return normalized;
+    } catch (error) {
+      return {};
     }
   }
 
