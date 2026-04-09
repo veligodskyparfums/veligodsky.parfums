@@ -282,8 +282,9 @@ body.menu-open .nav {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, rgba(7, 7, 7, 0.32) 0%, rgba(7, 7, 7, 0.85) 70%, rgba(7, 7, 7, 0.98) 100%),
-    var(--hero-bg-image, url("https://images.unsplash.com/photo-1523293182086-7651a899d37f?auto=format&fit=crop&w=1800&q=80")) center/cover no-repeat;
+    radial-gradient(120% 90% at 78% 18%, rgba(44, 88, 133, 0.36) 0%, rgba(15, 23, 37, 0.06) 52%, rgba(7, 10, 16, 0) 100%),
+    linear-gradient(102deg, rgba(6, 9, 15, 0.96) 0%, rgba(8, 14, 24, 0.86) 34%, rgba(10, 20, 34, 0.72) 58%, rgba(7, 12, 21, 0.92) 100%),
+    linear-gradient(180deg, rgba(7, 10, 16, 0.24) 0%, rgba(7, 10, 16, 0.92) 78%, rgba(7, 10, 16, 0.99) 100%);
   transform: scale(1.06);
 }
 
