@@ -33,6 +33,7 @@ const REVIEW_CAPTCHA_MIN_AGE_MS = 1500;
 const REVIEW_CAPTCHA_SECRET = crypto.randomBytes(32).toString("hex");
 const REVIEW_LINK_PATTERN = /(https?:\/\/|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/|\b))/i;
 const REVIEW_PRIVACY_CONSENT_VERSION = safeString(process.env.REVIEW_PRIVACY_CONSENT_VERSION || "privacy-v1-2026-04-08").slice(0, 64) || "privacy-v1-2026-04-08";
+const REVIEW_TERMS_CONSENT_VERSION = safeString(process.env.REVIEW_TERMS_CONSENT_VERSION || "terms-v2-2026-04-09").slice(0, 64) || "terms-v2-2026-04-09";
 const ADMIN_PASSWORD_HASH_PREFIX = "pbkdf2_sha256";
 const ADMIN_PASSWORD_HASH_ITERATIONS = 180000;
 const ADMIN_PASSWORD_HASH_BYTES = 32;
@@ -424,6 +425,24 @@ function normalizeReviewConsentProof(raw) {
   };
 }
 
+function normalizeReviewTermsProof(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const acceptedAt = normalizeIsoDate(raw.acceptedAt || raw.createdAt || raw.grantedAt);
+  const version = safeString(raw.version).slice(0, 64) || REVIEW_TERMS_CONSENT_VERSION;
+  const form = safeString(raw.form).slice(0, 48) || "review";
+  const ip = safeString(raw.ip).slice(0, 120);
+
+  return {
+    acceptedAt,
+    version,
+    form,
+    ip
+  };
+}
+
 function normalizeStoredReview(raw, prefix) {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -439,6 +458,7 @@ function normalizeStoredReview(raw, prefix) {
   const rating = clampInteger(raw.rating, 1, 5, 5);
   const idPrefix = safeString(prefix) || "r";
   const consentProof = normalizeReviewConsentProof(raw.consentProof || raw.consent);
+  const termsProof = normalizeReviewTermsProof(raw.termsProof || raw.terms);
 
   const next = {
     id: safeString(raw.id) || (idPrefix + "_" + crypto.randomBytes(6).toString("hex")),
@@ -452,6 +472,9 @@ function normalizeStoredReview(raw, prefix) {
 
   if (consentProof) {
     next.consentProof = consentProof;
+  }
+  if (termsProof) {
+    next.termsProof = termsProof;
   }
 
   return next;
@@ -487,6 +510,8 @@ function parseIncomingReviewPayload(payload) {
   const captchaAnswer = safeString(payload.captchaAnswer).slice(0, 32);
   const consentAccepted = parseBooleanLike(payload.consentAccepted);
   const consentVersion = safeString(payload.consentVersion).slice(0, 64) || REVIEW_PRIVACY_CONSENT_VERSION;
+  const termsAccepted = parseBooleanLike(payload.termsAccepted);
+  const termsVersion = safeString(payload.termsVersion).slice(0, 64) || REVIEW_TERMS_CONSENT_VERSION;
   const photo = sanitizeReviewPhoto(payload.photo || payload.image);
 
   if (website) {
@@ -505,6 +530,9 @@ function parseIncomingReviewPayload(payload) {
   if (!consentAccepted) {
     throw new Error("CONSENT_REQUIRED");
   }
+  if (!termsAccepted) {
+    throw new Error("TERMS_REQUIRED");
+  }
 
   return {
     author,
@@ -515,7 +543,9 @@ function parseIncomingReviewPayload(payload) {
     captchaToken,
     captchaAnswer,
     consentAccepted: true,
-    consentVersion
+    consentVersion,
+    termsAccepted: true,
+    termsVersion
   };
 }
 
@@ -722,6 +752,8 @@ function sanitizePublicStoreData(data) {
       const nextReview = Object.assign({}, review);
       delete nextReview.consentProof;
       delete nextReview.consent;
+      delete nextReview.termsProof;
+      delete nextReview.terms;
       return nextReview;
     });
   }
@@ -733,6 +765,8 @@ function sanitizePublicStoreData(data) {
         const nextReview = Object.assign({}, review);
         delete nextReview.consentProof;
         delete nextReview.consent;
+        delete nextReview.termsProof;
+        delete nextReview.terms;
         return nextReview;
       });
     }
@@ -1463,6 +1497,12 @@ async function handleProductReviewsApi(req, res) {
           form: "product_review",
           ip: clientIp
         },
+        termsProof: {
+          acceptedAt: new Date().toISOString(),
+          version: incomingReview.termsVersion,
+          form: "product_review",
+          ip: clientIp
+        },
         createdAt: new Date().toISOString()
       }, "ppr");
 
@@ -1567,6 +1607,12 @@ async function handleHomepageReviewsApi(req, res) {
       consentProof: {
         acceptedAt: new Date().toISOString(),
         version: incomingReview.consentVersion,
+        form: "homepage_review",
+        ip: clientIp
+      },
+      termsProof: {
+        acceptedAt: new Date().toISOString(),
+        version: incomingReview.termsVersion,
         form: "homepage_review",
         ip: clientIp
       },

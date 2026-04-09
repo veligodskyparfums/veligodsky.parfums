@@ -21,6 +21,7 @@
   var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
   var PRODUCT_REVIEW_PANELS_KEY = "veligodsky_product_review_panels_v1";
   var REVIEW_PRIVACY_CONSENT_VERSION = "privacy-v1-2026-04-08";
+  var REVIEW_TERMS_CONSENT_VERSION = "terms-v2-2026-04-09";
 
   var state = {
     products: [],
@@ -935,6 +936,10 @@
       + "        <input type=\"checkbox\" name=\"consentAccepted\" required>"
       + "        <span>Даю согласие на обработку персональных данных (<a href=\"/privacy.html\" target=\"_blank\" rel=\"noopener noreferrer\">Политика</a>).</span>"
       + "      </label>"
+      + "      <label class=\"review-consent\">"
+      + "        <input type=\"checkbox\" name=\"termsAccepted\" required>"
+      + "        <span>Подтверждаю, что ознакомлен(а) и согласен(а) с <a href=\"/terms.html\" target=\"_blank\" rel=\"noopener noreferrer\">условиями дистанционной продажи</a>.</span>"
+      + "      </label>"
       + "    </div>"
       + "    <div class=\"product-review-form-footer\">"
       + "      <small class=\"product-review-note\">Ссылки в отзыве запрещены. После отправки отзыв попадёт на модерацию.</small>"
@@ -1273,6 +1278,7 @@
       || String(state.homepageReviewDraft.text || "").trim()
       || String(state.homepageReviewDraft.photo || "").trim()
       || Boolean(state.homepageReviewDraft.consentAccepted)
+      || Boolean(state.homepageReviewDraft.termsAccepted)
       || String(state.homepageReviewDraft.rating || "5") !== "5"
     );
   }
@@ -1298,6 +1304,7 @@
     var ratingInput = form.querySelector("[name=\"rating\"]");
     var photoInput = form.querySelector("[name=\"photo\"]");
     var consentInput = form.querySelector("[name=\"consentAccepted\"]");
+    var termsInput = form.querySelector("[name=\"termsAccepted\"]");
 
     var draft = {
       author: authorInput ? String(authorInput.value || "") : "",
@@ -1305,7 +1312,8 @@
       text: textInput ? String(textInput.value || "") : "",
       rating: ratingInput ? String(ratingInput.value || "5") : "5",
       photo: photoInput ? String(photoInput.value || "") : "",
-      consentAccepted: Boolean(consentInput && consentInput.checked)
+      consentAccepted: Boolean(consentInput && consentInput.checked),
+      termsAccepted: Boolean(termsInput && termsInput.checked)
     };
 
     var isEmpty = !draft.author.trim()
@@ -1313,6 +1321,7 @@
       && !draft.text.trim()
       && !draft.photo.trim()
       && !draft.consentAccepted
+      && !draft.termsAccepted
       && draft.rating === "5";
 
     if (isEmpty) {
@@ -1346,6 +1355,7 @@
     var ratingInput = form.querySelector("[name=\"rating\"]");
     var photoInput = form.querySelector("[name=\"photo\"]");
     var consentInput = form.querySelector("[name=\"consentAccepted\"]");
+    var termsInput = form.querySelector("[name=\"termsAccepted\"]");
 
     if (authorInput) {
       authorInput.value = draft.author || "";
@@ -1364,6 +1374,9 @@
     }
     if (consentInput) {
       consentInput.checked = Boolean(draft.consentAccepted);
+    }
+    if (termsInput) {
+      termsInput.checked = Boolean(draft.termsAccepted);
     }
     syncReviewPhotoPreview(form, draft.photo || "");
   }
@@ -1605,7 +1618,8 @@
       text: textInput ? String(textInput.value || "") : "",
       rating: ratingInput ? String(ratingInput.value || "5") : "5",
       photo: photoInput ? String(photoInput.value || "") : "",
-      consentAccepted: Boolean(consentInput && consentInput.checked)
+      consentAccepted: Boolean(consentInput && consentInput.checked),
+      termsAccepted: Boolean(termsInput && termsInput.checked)
     };
 
     var isEmpty = !draft.author.trim()
@@ -1613,6 +1627,7 @@
       && !draft.text.trim()
       && !draft.photo.trim()
       && !draft.consentAccepted
+      && !draft.termsAccepted
       && draft.rating === "5";
 
     if (isEmpty) {
@@ -1651,6 +1666,7 @@
       var ratingInput = form.querySelector("[name=\"rating\"]");
       var photoInput = form.querySelector("[name=\"photo\"]");
       var consentInput = form.querySelector("[name=\"consentAccepted\"]");
+      var termsInput = form.querySelector("[name=\"termsAccepted\"]");
 
       if (authorInput) {
         authorInput.value = draft.author || "";
@@ -1669,6 +1685,9 @@
       }
       if (consentInput) {
         consentInput.checked = Boolean(draft.consentAccepted);
+      }
+      if (termsInput) {
+        termsInput.checked = Boolean(draft.termsAccepted);
       }
       syncReviewPhotoPreview(form, draft.photo || "");
       var reviewsSection = form.closest(".product-reviews");
@@ -1701,6 +1720,7 @@
     var captchaToken = String(formData.get("captchaToken") || "").trim();
     var captchaAnswer = String(formData.get("captchaAnswer") || "").trim();
     var consentAccepted = formData.get("consentAccepted") !== null;
+    var termsAccepted = formData.get("termsAccepted") !== null;
 
     if (!author || author.length < 2) {
       showToast("Укажите имя для отзыва.", true);
@@ -1721,6 +1741,10 @@
       showToast("Нужно согласие на обработку персональных данных.", true);
       return;
     }
+    if (!termsAccepted) {
+      showToast("Подтвердите ознакомление с условиями дистанционной продажи.", true);
+      return;
+    }
 
     var submitButton = form.querySelector("[type=\"submit\"]");
     if (submitButton) {
@@ -1738,7 +1762,9 @@
         captchaToken: captchaToken,
         captchaAnswer: captchaAnswer,
         consentAccepted: true,
-        consentVersion: REVIEW_PRIVACY_CONSENT_VERSION
+        consentVersion: REVIEW_PRIVACY_CONSENT_VERSION,
+        termsAccepted: true,
+        termsVersion: REVIEW_TERMS_CONSENT_VERSION
       });
 
       delete state.reviewDrafts[productId];
@@ -1774,6 +1800,8 @@
           showToast("Ссылки в отзывах запрещены.", true);
         } else if (validationCode === "CONSENT_REQUIRED") {
           showToast("Подтвердите согласие на обработку персональных данных.", true);
+        } else if (validationCode === "TERMS_REQUIRED") {
+          showToast("Подтвердите ознакомление с условиями дистанционной продажи.", true);
         } else if (validationCode === "CAPTCHA_REQUIRED" || validationCode === "CAPTCHA_INVALID" || validationCode === "CAPTCHA_EXPIRED" || validationCode === "CAPTCHA_TOO_FAST") {
           ensureReviewCaptcha(form, true);
           showToast("Капча не пройдена. Решите новый пример и отправьте ещё раз.", true);
@@ -1820,6 +1848,7 @@
     var captchaToken = String(formData.get("captchaToken") || "").trim();
     var captchaAnswer = String(formData.get("captchaAnswer") || "").trim();
     var consentAccepted = formData.get("consentAccepted") !== null;
+    var termsAccepted = formData.get("termsAccepted") !== null;
 
     if (!author || author.length < 2) {
       showToast("Укажите имя для отзыва.", true);
@@ -1840,6 +1869,10 @@
       showToast("Нужно согласие на обработку персональных данных.", true);
       return;
     }
+    if (!termsAccepted) {
+      showToast("Подтвердите ознакомление с условиями дистанционной продажи.", true);
+      return;
+    }
 
     var submitButton = form.querySelector("[type=\"submit\"]");
     if (submitButton) {
@@ -1857,7 +1890,9 @@
         captchaToken: captchaToken,
         captchaAnswer: captchaAnswer,
         consentAccepted: true,
-        consentVersion: REVIEW_PRIVACY_CONSENT_VERSION
+        consentVersion: REVIEW_PRIVACY_CONSENT_VERSION,
+        termsAccepted: true,
+        termsVersion: REVIEW_TERMS_CONSENT_VERSION
       });
 
       state.homepageReviewDraft = null;
@@ -1892,6 +1927,8 @@
           showToast("Ссылки в отзывах запрещены.", true);
         } else if (homepageValidationCode === "CONSENT_REQUIRED") {
           showToast("Подтвердите согласие на обработку персональных данных.", true);
+        } else if (homepageValidationCode === "TERMS_REQUIRED") {
+          showToast("Подтвердите ознакомление с условиями дистанционной продажи.", true);
         } else if (homepageValidationCode === "CAPTCHA_REQUIRED" || homepageValidationCode === "CAPTCHA_INVALID" || homepageValidationCode === "CAPTCHA_EXPIRED" || homepageValidationCode === "CAPTCHA_TOO_FAST") {
           ensureReviewCaptcha(form, true);
           showToast("Капча не пройдена. Решите новый пример и отправьте ещё раз.", true);

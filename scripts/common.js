@@ -879,7 +879,9 @@
       captchaToken: String(reviewPayload && reviewPayload.captchaToken || "").trim(),
       captchaAnswer: String(reviewPayload && reviewPayload.captchaAnswer || "").trim(),
       consentAccepted: Boolean(reviewPayload && reviewPayload.consentAccepted),
-      consentVersion: String(reviewPayload && reviewPayload.consentVersion || "").trim()
+      consentVersion: String(reviewPayload && reviewPayload.consentVersion || "").trim(),
+      termsAccepted: Boolean(reviewPayload && reviewPayload.termsAccepted),
+      termsVersion: String(reviewPayload && reviewPayload.termsVersion || "").trim()
     };
 
     var response = await fetch(API_PRODUCT_REVIEWS_URL, {
@@ -933,7 +935,9 @@
       captchaToken: String(reviewPayload && reviewPayload.captchaToken || "").trim(),
       captchaAnswer: String(reviewPayload && reviewPayload.captchaAnswer || "").trim(),
       consentAccepted: Boolean(reviewPayload && reviewPayload.consentAccepted),
-      consentVersion: String(reviewPayload && reviewPayload.consentVersion || "").trim()
+      consentVersion: String(reviewPayload && reviewPayload.consentVersion || "").trim(),
+      termsAccepted: Boolean(reviewPayload && reviewPayload.termsAccepted),
+      termsVersion: String(reviewPayload && reviewPayload.termsVersion || "").trim()
     };
 
     var response = await fetch(API_HOMEPAGE_REVIEWS_URL, {
