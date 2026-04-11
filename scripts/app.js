@@ -66,6 +66,7 @@
 
   async function init() {
     cacheElements();
+    decorateTelegramButtons();
     if (typeof store.init === "function") {
       await store.init();
     }
@@ -133,6 +134,47 @@
     elements.heroBg = document.getElementById("heroBg");
     elements.backupNotice = document.getElementById("backupNotice");
     elements.yearNow = document.getElementById("yearNow");
+  }
+
+  function decorateTelegramButtons() {
+    decorateTelegramButton(elements.headerTelegramBtn);
+    decorateTelegramButton(elements.consultTelegramBtn);
+    decorateTelegramButton(elements.checkoutBtn);
+  }
+
+  function decorateTelegramButton(button) {
+    if (!button || button.dataset.telegramDecorated === "1") {
+      return;
+    }
+
+    var labelText = String(button.textContent || "").replace(/\s+/g, " ").trim();
+    if (!labelText) {
+      return;
+    }
+
+    button.classList.add("telegram-cta");
+    button.textContent = "";
+
+    var label = document.createElement("span");
+    label.className = "telegram-cta__label";
+    label.textContent = labelText;
+
+    var status = document.createElement("span");
+    status.className = "telegram-cta__status";
+
+    var dot = document.createElement("span");
+    dot.className = "telegram-cta__dot";
+    dot.setAttribute("aria-hidden", "true");
+
+    var text = document.createElement("span");
+    text.className = "telegram-cta__status-text";
+    text.textContent = "продавец онлайн";
+
+    status.appendChild(dot);
+    status.appendChild(text);
+    button.appendChild(label);
+    button.appendChild(status);
+    button.dataset.telegramDecorated = "1";
   }
 
   function bindEvents() {

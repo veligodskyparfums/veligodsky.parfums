@@ -262,12 +262,54 @@ body.menu-open .nav {
   background: rgba(255, 255, 255, 0.12);
 }
 
+.telegram-cta {
+  flex-direction: column;
+  gap: 2px;
+  text-align: center;
+  line-height: 1.15;
+}
+
+.telegram-cta__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 0.56rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+
+.telegram-cta__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3edb74;
+  box-shadow: 0 0 0 0 rgba(62, 219, 116, 0.5);
+  animation: telegram-online-pulse 2.8s ease-in-out infinite;
+}
+
+@keyframes telegram-online-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(62, 219, 116, 0.55);
+    opacity: 0.9;
+  }
+  50% {
+    box-shadow: 0 0 0 9px rgba(62, 219, 116, 0);
+    opacity: 1;
+  }
+}
+
 .full-width {
   width: 100%;
 }
 
 .header-telegram {
   display: none;
+  padding-top: 9px;
+  padding-bottom: 9px;
 }
 
 .hero {
@@ -440,6 +482,7 @@ body.menu-open .nav {
   overflow: hidden;
   display: grid;
   grid-template-rows: auto 1fr;
+  align-self: start;
   box-shadow: var(--shadow);
   transition: transform 0.25s ease, border-color 0.25s ease;
 }
@@ -477,6 +520,7 @@ body.menu-open .nav {
   padding: 14px;
   display: grid;
   gap: 10px;
+  align-content: start;
 }
 
 .product-name {
@@ -807,6 +851,7 @@ body.menu-open .nav {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  align-items: start;
 }
 
 .catalog-footer {

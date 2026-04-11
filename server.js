@@ -115,6 +115,8 @@ const ALLOWED_STATIC_FILES = new Set([
   "index.html",
   "styles.css",
   "favicon.svg",
+  "assets/hero-welcome-readable.jpg",
+  "assets/hero-welcome-logo.jpg",
   "robots.txt",
   "sitemap.xml",
   "privacy.html",
