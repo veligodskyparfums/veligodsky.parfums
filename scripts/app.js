@@ -168,7 +168,7 @@
 
     var text = document.createElement("span");
     text.className = "telegram-cta__status-text";
-    text.textContent = "продавец онлайн";
+    text.textContent = "всегда онлайн";
 
     status.appendChild(dot);
     status.appendChild(text);
