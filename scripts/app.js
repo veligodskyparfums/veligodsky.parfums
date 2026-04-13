@@ -834,7 +834,8 @@
       + "    <div>"
       + "      <h3 class=\"product-name\">" + escapeHtml(product.name) + "</h3>"
       + "      <p class=\"product-brand\">" + escapeHtml(product.brand) + " • " + store.getGenderLabel(product.gender) + "</p>"
-      + "      <p class=\"product-description\">" + escapeHtml(product.description || "Оригинальный аромат из коллекции магазина.") + "</p>"
+      + "      <p class=\"product-description is-collapsed\" data-product-description>" + escapeHtml(product.description || "Оригинальный аромат из коллекции магазина.") + "</p>"
+      + "      <button class=\"product-desc-toggle\" type=\"button\" data-product-desc-toggle>Подробнее</button>"
       + "    </div>"
       + "    <div class=\"volume-line\">"
       + "      <span>Цена от:</span>"
@@ -1019,6 +1020,29 @@
         markReviewInteraction();
         clearReviewPhoto(removePhotoForm);
         persistReviewDraft(removePhotoForm);
+      }
+      return;
+    }
+
+    var descToggle = event.target.closest("[data-product-desc-toggle]");
+    if (descToggle) {
+      var descWrap = descToggle.closest("[data-product-id]");
+      if (!descWrap) {
+        return;
+      }
+      var desc = descWrap.querySelector("[data-product-description]");
+      if (!desc) {
+        return;
+      }
+      var isExpanded = desc.classList.contains("is-expanded");
+      if (isExpanded) {
+        desc.classList.remove("is-expanded");
+        desc.classList.add("is-collapsed");
+        descToggle.textContent = "Подробнее";
+      } else {
+        desc.classList.add("is-expanded");
+        desc.classList.remove("is-collapsed");
+        descToggle.textContent = "Свернуть";
       }
       return;
     }
