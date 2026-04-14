@@ -128,6 +128,7 @@
 
     elements.headerTelegramBtn = document.getElementById("headerTelegramBtn");
     elements.consultTelegramBtn = document.getElementById("consultTelegramBtn");
+    elements.stockBannerText = document.getElementById("stockBannerText");
     elements.footerChannelLink = document.getElementById("footerChannelLink");
     elements.footerDmLink = document.getElementById("footerDmLink");
     elements.freeShippingInline = document.getElementById("freeShippingInline");
@@ -446,6 +447,9 @@
     }
     if (elements.freeShippingInline) {
       elements.freeShippingInline.textContent = store.formatPrice(settings.freeShippingThreshold);
+    }
+    if (elements.stockBannerText) {
+      elements.stockBannerText.textContent = "Не нашли нужный аромат? Напишите в Telegram: в наличии больше позиций, чем в каталоге.";
     }
 
     applyHeroBackground(settings);

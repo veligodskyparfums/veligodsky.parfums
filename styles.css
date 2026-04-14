@@ -132,6 +132,36 @@ textarea {
   color: #b6f5cb;
 }
 
+.stock-banner {
+  position: sticky;
+  top: 72px;
+  z-index: 70;
+  backdrop-filter: blur(10px);
+  background: linear-gradient(90deg, rgba(8, 8, 8, 0.92), rgba(16, 16, 16, 0.86));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.stock-banner-inner {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 0;
+}
+
+.stock-banner-cloud {
+  margin: 0;
+  width: 100%;
+  text-align: center;
+  color: #ececec;
+  font-size: 0.88rem;
+  letter-spacing: 0.01em;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+}
+
 .header-inner {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -1852,6 +1882,18 @@ body.menu-open .nav {
 }
 
 @media (max-width: 600px) {
+  .stock-banner-inner {
+    min-height: 0;
+    justify-content: center;
+    padding: 8px 0;
+  }
+
+  .stock-banner-cloud {
+    font-size: 0.8rem;
+    line-height: 1.35;
+    text-align: left;
+  }
+
   .admin-capacity-monitor {
     flex-direction: column;
     align-items: flex-start;
