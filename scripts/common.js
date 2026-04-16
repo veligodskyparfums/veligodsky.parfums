@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   "use strict";
 
   var DATA_KEY = "veligodsky_data_v1";
@@ -37,25 +37,25 @@
   var defaultHomepageReviews = [
     {
       id: "hr_001",
-      author: "Анна",
-      city: "Москва",
-      text: "Очень приятный сервис: помогли подобрать аромат под запрос и быстро отправили заказ.",
+      author: "РђРЅРЅР°",
+      city: "РњРѕСЃРєРІР°",
+      text: "РћС‡РµРЅСЊ РїСЂРёСЏС‚РЅС‹Р№ СЃРµСЂРІРёСЃ: РїРѕРјРѕРіР»Рё РїРѕРґРѕР±СЂР°С‚СЊ Р°СЂРѕРјР°С‚ РїРѕРґ Р·Р°РїСЂРѕСЃ Рё Р±С‹СЃС‚СЂРѕ РѕС‚РїСЂР°РІРёР»Рё Р·Р°РєР°Р·.",
       rating: 5,
       createdAt: "2026-03-20T12:00:00.000Z"
     },
     {
       id: "hr_002",
-      author: "Денис",
-      city: "Санкт-Петербург",
-      text: "Брал в подарок, все пришло в срок. Упаковка аккуратная, аромат оригинальный.",
+      author: "Р”РµРЅРёСЃ",
+      city: "РЎР°РЅРєС‚-РџРµС‚РµСЂР±СѓСЂРі",
+      text: "Р‘СЂР°Р» РІ РїРѕРґР°СЂРѕРє, РІСЃРµ РїСЂРёС€Р»Рѕ РІ СЃСЂРѕРє. РЈРїР°РєРѕРІРєР° Р°РєРєСѓСЂР°С‚РЅР°СЏ, Р°СЂРѕРјР°С‚ РѕСЂРёРіРёРЅР°Р»СЊРЅС‹Р№.",
       rating: 5,
       createdAt: "2026-03-21T15:30:00.000Z"
     },
     {
       id: "hr_003",
-      author: "Екатерина",
-      city: "Казань",
-      text: "Понравилось, что можно получить консультацию в Telegram и выбрать пробник к заказу.",
+      author: "Р•РєР°С‚РµСЂРёРЅР°",
+      city: "РљР°Р·Р°РЅСЊ",
+      text: "РџРѕРЅСЂР°РІРёР»РѕСЃСЊ, С‡С‚Рѕ РјРѕР¶РЅРѕ РїРѕР»СѓС‡РёС‚СЊ РєРѕРЅСЃСѓР»СЊС‚Р°С†РёСЋ РІ Telegram Рё РІС‹Р±СЂР°С‚СЊ РїСЂРѕР±РЅРёРє Рє Р·Р°РєР°Р·Сѓ.",
       rating: 5,
       createdAt: "2026-03-22T09:15:00.000Z"
     }
@@ -67,7 +67,7 @@
       name: "Aventus",
       brand: "Creed",
       gender: "male",
-      description: "Свежий цитрусово-древесный аромат с аккордом ананаса.",
+      description: "РЎРІРµР¶РёР№ С†РёС‚СЂСѓСЃРѕРІРѕ-РґСЂРµРІРµСЃРЅС‹Р№ Р°СЂРѕРјР°С‚ СЃ Р°РєРєРѕСЂРґРѕРј Р°РЅР°РЅР°СЃР°.",
       image: placeholderImages[0],
       volumes: [
         { ml: 10, price: 4200 },
@@ -82,7 +82,7 @@
       name: "Baccarat Rouge 540",
       brand: "Maison Francis Kurkdjian",
       gender: "unisex",
-      description: "Амброво-древесный шлейф с шафраном и кедром.",
+      description: "РђРјР±СЂРѕРІРѕ-РґСЂРµРІРµСЃРЅС‹Р№ С€Р»РµР№С„ СЃ С€Р°С„СЂР°РЅРѕРј Рё РєРµРґСЂРѕРј.",
       image: placeholderImages[1],
       volumes: [
         { ml: 10, price: 5200 },
@@ -97,7 +97,7 @@
       name: "Tobacco Vanille",
       brand: "Tom Ford",
       gender: "unisex",
-      description: "Табак, ваниль и специи в насыщенном вечернем звучании.",
+      description: "РўР°Р±Р°Рє, РІР°РЅРёР»СЊ Рё СЃРїРµС†РёРё РІ РЅР°СЃС‹С‰РµРЅРЅРѕРј РІРµС‡РµСЂРЅРµРј Р·РІСѓС‡Р°РЅРёРё.",
       image: placeholderImages[2],
       volumes: [
         { ml: 10, price: 3900 },
@@ -112,7 +112,7 @@
       name: "Sauvage Elixir",
       brand: "Dior",
       gender: "male",
-      description: "Глубокий пряный аромат с лавандой и древесными нотами.",
+      description: "Р“Р»СѓР±РѕРєРёР№ РїСЂСЏРЅС‹Р№ Р°СЂРѕРјР°С‚ СЃ Р»Р°РІР°РЅРґРѕР№ Рё РґСЂРµРІРµСЃРЅС‹РјРё РЅРѕС‚Р°РјРё.",
       image: placeholderImages[3],
       volumes: [
         { ml: 10, price: 2800 },
@@ -126,7 +126,7 @@
       name: "Coco Mademoiselle",
       brand: "Chanel",
       gender: "female",
-      description: "Цитрусово-цветочный аромат с элегантной базой пачули.",
+      description: "Р¦РёС‚СЂСѓСЃРѕРІРѕ-С†РІРµС‚РѕС‡РЅС‹Р№ Р°СЂРѕРјР°С‚ СЃ СЌР»РµРіР°РЅС‚РЅРѕР№ Р±Р°Р·РѕР№ РїР°С‡СѓР»Рё.",
       image: placeholderImages[4],
       volumes: [
         { ml: 10, price: 2300 },
@@ -141,7 +141,7 @@
       name: "Gypsy Water",
       brand: "Byredo",
       gender: "unisex",
-      description: "Легкий древесно-цитрусовый аромат с можжевельником и ванилью.",
+      description: "Р›РµРіРєРёР№ РґСЂРµРІРµСЃРЅРѕ-С†РёС‚СЂСѓСЃРѕРІС‹Р№ Р°СЂРѕРјР°С‚ СЃ РјРѕР¶Р¶РµРІРµР»СЊРЅРёРєРѕРј Рё РІР°РЅРёР»СЊСЋ.",
       image: placeholderImages[0],
       volumes: [
         { ml: 10, price: 3200 },
@@ -156,7 +156,7 @@
       name: "Oud for Greatness",
       brand: "Initio",
       gender: "unisex",
-      description: "Интенсивный удовый аромат с шафраном и мускусом.",
+      description: "РРЅС‚РµРЅСЃРёРІРЅС‹Р№ СѓРґРѕРІС‹Р№ Р°СЂРѕРјР°С‚ СЃ С€Р°С„СЂР°РЅРѕРј Рё РјСѓСЃРєСѓСЃРѕРј.",
       image: placeholderImages[1],
       volumes: [
         { ml: 5, price: 3700 },
@@ -171,7 +171,7 @@
       name: "Santal 33",
       brand: "Le Labo",
       gender: "unisex",
-      description: "Культовый древесный аромат с нотами сандала и кожи.",
+      description: "РљСѓР»СЊС‚РѕРІС‹Р№ РґСЂРµРІРµСЃРЅС‹Р№ Р°СЂРѕРјР°С‚ СЃ РЅРѕС‚Р°РјРё СЃР°РЅРґР°Р»Р° Рё РєРѕР¶Рё.",
       image: placeholderImages[2],
       volumes: [
         { ml: 10, price: 4100 },
@@ -186,7 +186,7 @@
       name: "Angels Share",
       brand: "Kilian",
       gender: "unisex",
-      description: "Коньячный аккорд с корицей, дубом и пралине.",
+      description: "РљРѕРЅСЊСЏС‡РЅС‹Р№ Р°РєРєРѕСЂРґ СЃ РєРѕСЂРёС†РµР№, РґСѓР±РѕРј Рё РїСЂР°Р»РёРЅРµ.",
       image: placeholderImages[3],
       volumes: [
         { ml: 10, price: 3400 },
@@ -200,7 +200,7 @@
       name: "Erba Pura",
       brand: "Xerjoff",
       gender: "unisex",
-      description: "Яркий фруктовый аромат с мускусным шлейфом.",
+      description: "РЇСЂРєРёР№ С„СЂСѓРєС‚РѕРІС‹Р№ Р°СЂРѕРјР°С‚ СЃ РјСѓСЃРєСѓСЃРЅС‹Рј С€Р»РµР№С„РѕРј.",
       image: placeholderImages[4],
       volumes: [
         { ml: 10, price: 3000 },
@@ -314,6 +314,14 @@
       ml: ml,
       price: price
     };
+  }
+
+  function normalizeBottleType(value) {
+    var safe = String(value || "full").toLowerCase().trim();
+    if (["decant", "tester", "full"].indexOf(safe) === -1) {
+      return "full";
+    }
+    return safe;
   }
 
   function normalizeReview(review, options) {
@@ -442,6 +450,7 @@
       name: name,
       brand: brand,
       gender: gender,
+      bottleType: normalizeBottleType(product.bottleType),
       description: String(product.description || "").trim(),
       image: pickImage(product.image, idx),
       volumes: normalizedVolumes,
@@ -1057,6 +1066,7 @@
       productId: productId,
       name: name,
       brand: brand,
+      bottleType: normalizeBottleType(item.bottleType),
       image: pickImage(item.image, 0),
       ml: ml,
       price: price,
@@ -1101,7 +1111,7 @@
     });
 
     if (!product) {
-      return { ok: false, message: "Товар не найден." };
+      return { ok: false, message: "РўРѕРІР°СЂ РЅРµ РЅР°Р№РґРµРЅ." };
     }
 
     var volume = product.volumes.find(function (item) {
@@ -1109,7 +1119,7 @@
     });
 
     if (!volume) {
-      return { ok: false, message: "Выберите объем аромата." };
+      return { ok: false, message: "Р’С‹Р±РµСЂРёС‚Рµ РѕР±СЉРµРј Р°СЂРѕРјР°С‚Р°." };
     }
 
     var cart = getCart();
@@ -1126,6 +1136,7 @@
         productId: product.id,
         name: product.name,
         brand: product.brand,
+        bottleType: normalizeBottleType(product.bottleType),
         image: product.image,
         ml: volume.ml,
         price: volume.price,
@@ -1195,7 +1206,7 @@
 
   function formatPrice(value) {
     var amount = Math.round(toNumber(value, 0));
-    return numberFormatter.format(amount) + " ₽";
+    return numberFormatter.format(amount) + " в‚Ѕ";
   }
 
   function getMinPrice(product) {
@@ -1218,14 +1229,23 @@
 
   function getGenderLabel(gender) {
     if (gender === "male") {
-      return "Мужские";
+      return "РњСѓР¶СЃРєРёРµ";
     }
     if (gender === "female") {
-      return "Женские";
+      return "Р–РµРЅСЃРєРёРµ";
     }
-    return "Унисекс";
+    return "РЈРЅРёСЃРµРєСЃ";
   }
-
+  function getBottleTypeLabel(type) {
+    var safe = normalizeBottleType(type);
+    if (safe === "decant") {
+      return "РћС‚Р»РёРІР°РЅС‚";
+    }
+    if (safe === "tester") {
+      return "РўРµСЃС‚РµСЂ";
+    }
+    return "РџРѕР»РЅРѕС†РµРЅРЅС‹Р№ С„Р»Р°РєРѕРЅ";
+  }
   function buildTelegramOrderMessage(cart, sample, settings) {
     var safeCart = Array.isArray(cart) ? cart : getCart();
     var safeSettings = settings || getSettings();
@@ -1234,27 +1254,27 @@
     }, 0);
     var lines = [];
 
-    lines.push("Здравствуйте! Хочу оформить заказ в " + safeSettings.storeName + ".");
+    lines.push("Р—РґСЂР°РІСЃС‚РІСѓР№С‚Рµ! РҐРѕС‡Сѓ РѕС„РѕСЂРјРёС‚СЊ Р·Р°РєР°Р· РІ " + safeSettings.storeName + ".");
     lines.push("");
-    lines.push("Состав заказа:");
+    lines.push("РЎРѕСЃС‚Р°РІ Р·Р°РєР°Р·Р°:");
 
     safeCart.forEach(function (item, index) {
       var lineTotal = item.price * item.qty;
-      lines.push((index + 1) + ". " + item.name + " (" + item.brand + ") - " + formatMl(item.ml) + " мл x " + item.qty + " = " + formatPrice(lineTotal));
+      lines.push((index + 1) + ". " + item.name + " (" + item.brand + ", " + getBottleTypeLabel(item.bottleType) + ") - " + formatMl(item.ml) + " РјР» x " + item.qty + " = " + formatPrice(lineTotal));
     });
 
     lines.push("");
-    lines.push("Итого: " + formatPrice(total));
+    lines.push("РС‚РѕРіРѕ: " + formatPrice(total));
 
     if (total >= safeSettings.freeShippingThreshold) {
-      lines.push("Доставка: Бесплатная");
+      lines.push("Р”РѕСЃС‚Р°РІРєР°: Р‘РµСЃРїР»Р°С‚РЅР°СЏ");
     } else {
-      lines.push("До бесплатной доставки: " + formatPrice(safeSettings.freeShippingThreshold - total));
+      lines.push("Р”Рѕ Р±РµСЃРїР»Р°С‚РЅРѕР№ РґРѕСЃС‚Р°РІРєРё: " + formatPrice(safeSettings.freeShippingThreshold - total));
     }
 
     var gift = String(sample || "").trim();
-    lines.push("Пробник 2ml: " + (gift || "не указан"));
-    lines.push("Дата заказа: " + new Date().toLocaleString("ru-RU"));
+    lines.push("РџСЂРѕР±РЅРёРє 2ml: " + (gift || "РЅРµ СѓРєР°Р·Р°РЅ"));
+    lines.push("Р”Р°С‚Р° Р·Р°РєР°Р·Р°: " + new Date().toLocaleString("ru-RU"));
 
     return lines.join("\n");
   }
@@ -1311,7 +1331,9 @@
     getMinPrice: getMinPrice,
     getBrands: getBrands,
     getGenderLabel: getGenderLabel,
+    getBottleTypeLabel: getBottleTypeLabel,
     buildTelegramOrderMessage: buildTelegramOrderMessage,
     buildTelegramUrl: buildTelegramUrl
   };
 })();
+

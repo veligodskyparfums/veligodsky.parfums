@@ -81,6 +81,7 @@
     elements.perfumeNameInput = document.getElementById("perfumeNameInput");
     elements.perfumeBrandInput = document.getElementById("perfumeBrandInput");
     elements.perfumeGenderInput = document.getElementById("perfumeGenderInput");
+    elements.perfumeBottleTypeInput = document.getElementById("perfumeBottleTypeInput");
     elements.perfumeDescriptionInput = document.getElementById("perfumeDescriptionInput");
     elements.perfumeImageInput = document.getElementById("perfumeImageInput");
     elements.perfumeImagePreview = document.getElementById("perfumeImagePreview");
@@ -442,6 +443,14 @@
     return Math.round(numeric * 100) / 100;
   }
 
+  function normalizeBottleType(value) {
+    var safe = String(value || "full").toLowerCase().trim();
+    if (["decant", "tester", "full"].indexOf(safe) === -1) {
+      return "full";
+    }
+    return safe;
+  }
+
   function getMlKey(value) {
     var normalized = normalizeMlInput(value);
     if (!Number.isFinite(normalized)) {
@@ -567,6 +576,7 @@
         name: String(parsed.name || ""),
         brand: String(parsed.brand || ""),
         gender: String(parsed.gender || "unisex"),
+        bottleType: normalizeBottleType(parsed.bottleType),
         description: String(parsed.description || ""),
         topWeek: Boolean(parsed.topWeek),
         topMonth: Boolean(parsed.topMonth),
@@ -645,6 +655,7 @@
       name: String(elements.perfumeNameInput.value || ""),
       brand: String(elements.perfumeBrandInput.value || ""),
       gender: String(elements.perfumeGenderInput.value || "unisex"),
+      bottleType: normalizeBottleType(elements.perfumeBottleTypeInput && elements.perfumeBottleTypeInput.value),
       description: String(elements.perfumeDescriptionInput.value || ""),
       topWeek: Boolean(elements.topWeekInput.checked),
       topMonth: Boolean(elements.topMonthInput.checked),
@@ -667,6 +678,10 @@
     }
 
     if (Boolean(draft.topWeek) || Boolean(draft.topMonth)) {
+      return true;
+    }
+
+    if (normalizeBottleType(draft.bottleType) !== "full") {
       return true;
     }
 
@@ -702,6 +717,7 @@
     if (["male", "female", "unisex"].indexOf(gender) === -1) {
       gender = "unisex";
     }
+    var bottleType = normalizeBottleType(draft.bottleType);
 
     state.editingId = String(draft.editingId || "") || null;
     state.imageData = String(draft.imageData || "");
@@ -711,6 +727,9 @@
     elements.perfumeNameInput.value = String(draft.name || "");
     elements.perfumeBrandInput.value = String(draft.brand || "");
     elements.perfumeGenderInput.value = gender;
+    if (elements.perfumeBottleTypeInput) {
+      elements.perfumeBottleTypeInput.value = bottleType;
+    }
     elements.perfumeDescriptionInput.value = String(draft.description || "");
     elements.topWeekInput.checked = Boolean(draft.topWeek);
     elements.topMonthInput.checked = Boolean(draft.topMonth);
@@ -899,6 +918,7 @@
     var name = String(elements.perfumeNameInput.value || "").trim();
     var brand = String(elements.perfumeBrandInput.value || "").trim();
     var gender = String(elements.perfumeGenderInput.value || "unisex");
+    var bottleType = normalizeBottleType(elements.perfumeBottleTypeInput && elements.perfumeBottleTypeInput.value);
     var description = String(elements.perfumeDescriptionInput.value || "").trim();
     var volumes = collectVolumes();
 
@@ -928,6 +948,7 @@
       name: name,
       brand: brand,
       gender: gender,
+      bottleType: bottleType,
       description: description,
       image: image,
       volumes: volumes,
@@ -969,6 +990,9 @@
     elements.editorTitle.textContent = "Добавить парфюм";
     elements.perfumeIdInput.value = "";
     elements.perfumeForm.reset();
+    if (elements.perfumeBottleTypeInput) {
+      elements.perfumeBottleTypeInput.value = "full";
+    }
 
     elements.volumesContainer.innerHTML = "";
     appendVolumeRow({ ml: "", price: "" });
@@ -997,6 +1021,9 @@
     elements.perfumeNameInput.value = product.name;
     elements.perfumeBrandInput.value = product.brand;
     elements.perfumeGenderInput.value = product.gender;
+    if (elements.perfumeBottleTypeInput) {
+      elements.perfumeBottleTypeInput.value = normalizeBottleType(product.bottleType);
+    }
     elements.perfumeDescriptionInput.value = product.description || "";
     elements.topWeekInput.checked = Boolean(product.topWeek);
     elements.topMonthInput.checked = Boolean(product.topMonth);
@@ -1472,7 +1499,7 @@
         + "    <div class=\"admin-product-head\">"
         + "      <div class=\"admin-product-title\">"
         + "        <strong>" + escapeHtml(product.name) + "</strong>"
-        + "        <span>" + escapeHtml(product.brand) + " | " + store.getGenderLabel(product.gender) + "</span>"
+        + "        <span>" + escapeHtml(product.brand) + " | " + store.getGenderLabel(product.gender) + " | " + store.getBottleTypeLabel(product.bottleType) + "</span>"
         + "      </div>"
         + "      <div class=\"admin-product-actions\">"
         + "        <button class=\"btn btn-ghost\" type=\"button\" data-action=\"edit\" data-id=\"" + escapeHtml(product.id) + "\">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c</button>"

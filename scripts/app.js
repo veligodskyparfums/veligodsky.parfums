@@ -851,7 +851,7 @@
       + "  <div class=\"product-content\">"
       + "    <div>"
       + "      <h3 class=\"product-name\">" + escapeHtml(product.name) + "</h3>"
-      + "      <p class=\"product-brand\">" + escapeHtml(product.brand) + " • " + store.getGenderLabel(product.gender) + "</p>"
+      + "      <p class=\"product-brand\">" + escapeHtml(product.brand) + " • " + store.getGenderLabel(product.gender) + " • " + store.getBottleTypeLabel(product.bottleType) + "</p>"
       + "      <p class=\"product-description is-collapsed\" data-product-description>" + escapeHtml(product.description || "Оригинальный аромат из коллекции магазина.") + "</p>"
       + "      <button class=\"product-desc-toggle\" type=\"button\" data-product-desc-toggle>Подробнее</button>"
       + "    </div>"
