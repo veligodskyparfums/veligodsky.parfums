@@ -222,6 +222,38 @@
     return Number.isFinite(num) ? num : (fallback || 0);
   }
 
+  function toMlNumber(value, fallback) {
+    var safe = value;
+    if (typeof value === "string") {
+      safe = value.trim().replace(",", ".");
+    }
+    var num = Number(safe);
+    return Number.isFinite(num) ? num : (fallback || 0);
+  }
+
+  function normalizeMlValue(value, fallback) {
+    var num = toMlNumber(value, fallback || 0);
+    if (!Number.isFinite(num)) {
+      return fallback || 0;
+    }
+    return Math.round(num * 100) / 100;
+  }
+
+  function getMlKey(value) {
+    return String(normalizeMlValue(value, 0));
+  }
+
+  function formatMl(value) {
+    var normalized = normalizeMlValue(value, 0);
+    if (normalized <= 0) {
+      return "0";
+    }
+    if (Math.abs(normalized - Math.round(normalized)) < 1e-9) {
+      return String(Math.round(normalized));
+    }
+    return String(normalized).replace(".", ",");
+  }
+
   function toBoolean(value, fallback) {
     if (typeof value === "boolean") {
       return value;
@@ -273,7 +305,7 @@
     if (!volume || typeof volume !== "object") {
       return null;
     }
-    var ml = Math.round(toNumber(volume.ml));
+    var ml = normalizeMlValue(volume.ml, 0);
     var price = Math.round(toNumber(volume.price));
     if (ml <= 0 || price <= 0) {
       return null;
@@ -1010,7 +1042,7 @@
     var productId = String(item.productId || "").trim();
     var name = String(item.name || "").trim();
     var brand = String(item.brand || "").trim();
-    var ml = Math.round(toNumber(item.ml));
+    var ml = normalizeMlValue(item.ml, 0);
     var price = Math.round(toNumber(item.price));
     var qty = Math.max(1, Math.round(toNumber(item.qty, 1)));
 
@@ -1018,7 +1050,7 @@
       return null;
     }
 
-    var itemKey = String(item.itemKey || productId + "_" + ml);
+    var itemKey = String(item.itemKey || productId + "_" + getMlKey(ml));
 
     return {
       itemKey: itemKey,
@@ -1062,6 +1094,7 @@
 
   function addToCart(productId, ml, qty) {
     var quantity = Math.max(1, Math.round(toNumber(qty, 1)));
+    var normalizedMl = normalizeMlValue(ml, 0);
     var products = getProducts();
     var product = products.find(function (item) {
       return item.id === productId;
@@ -1072,7 +1105,7 @@
     }
 
     var volume = product.volumes.find(function (item) {
-      return Number(item.ml) === Number(ml);
+      return Math.abs(normalizeMlValue(item.ml, 0) - normalizedMl) < 0.0001;
     });
 
     if (!volume) {
@@ -1080,7 +1113,7 @@
     }
 
     var cart = getCart();
-    var itemKey = product.id + "_" + volume.ml;
+    var itemKey = product.id + "_" + getMlKey(volume.ml);
     var existing = cart.find(function (item) {
       return item.itemKey === itemKey;
     });
@@ -1207,7 +1240,7 @@
 
     safeCart.forEach(function (item, index) {
       var lineTotal = item.price * item.qty;
-      lines.push((index + 1) + ". " + item.name + " (" + item.brand + ") - " + item.ml + " мл x " + item.qty + " = " + formatPrice(lineTotal));
+      lines.push((index + 1) + ". " + item.name + " (" + item.brand + ") - " + formatMl(item.ml) + " мл x " + item.qty + " = " + formatPrice(lineTotal));
     });
 
     lines.push("");
@@ -1274,6 +1307,7 @@
     getSampleChoice: getSampleChoice,
     saveSampleChoice: saveSampleChoice,
     formatPrice: formatPrice,
+    formatMl: formatMl,
     getMinPrice: getMinPrice,
     getBrands: getBrands,
     getGenderLabel: getGenderLabel,

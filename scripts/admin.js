@@ -433,6 +433,37 @@
     showToast("Главное фото сброшено. Нажмите «Сохранить настройки».");
   }
 
+  function normalizeMlInput(value) {
+    var safe = String(value || "").trim().replace(",", ".");
+    var numeric = Number(safe);
+    if (!Number.isFinite(numeric)) {
+      return NaN;
+    }
+    return Math.round(numeric * 100) / 100;
+  }
+
+  function getMlKey(value) {
+    var normalized = normalizeMlInput(value);
+    if (!Number.isFinite(normalized)) {
+      return "";
+    }
+    return String(normalized);
+  }
+
+  function formatMlValue(value) {
+    if (store && typeof store.formatMl === "function") {
+      return store.formatMl(value);
+    }
+    var normalized = normalizeMlInput(value);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      return "0";
+    }
+    if (Math.abs(normalized - Math.round(normalized)) < 1e-9) {
+      return String(Math.round(normalized));
+    }
+    return String(normalized).replace(".", ",");
+  }
+
   function createVolumeRow(volume) {
     var data = volume || { ml: "", price: "" };
     var row = document.createElement("div");
@@ -440,7 +471,7 @@
     row.innerHTML = ""
       + "<label class=\"field\">"
       + "  <span>Объём, ml</span>"
-      + "  <input class=\"volume-ml\" type=\"number\" min=\"1\" required value=\"" + escapeHtml(data.ml) + "\">"
+      + "  <input class=\"volume-ml\" type=\"number\" min=\"0.1\" step=\"0.1\" required value=\"" + escapeHtml(data.ml) + "\">"
       + "</label>"
       + "<label class=\"field\">"
       + "  <span>Цена, ₽</span>"
@@ -460,7 +491,7 @@
     var volumes = rows.map(function (row) {
       var mlInput = row.querySelector(".volume-ml");
       var priceInput = row.querySelector(".volume-price");
-      var ml = Math.round(Number(mlInput.value));
+      var ml = normalizeMlInput(mlInput && mlInput.value);
       var price = Math.round(Number(priceInput.value));
 
       if (!Number.isFinite(ml) || ml <= 0 || !Number.isFinite(price) || price <= 0) {
@@ -479,7 +510,7 @@
 
     var uniqueMap = new Map();
     volumes.forEach(function (item) {
-      uniqueMap.set(item.ml, item);
+      uniqueMap.set(getMlKey(item.ml), item);
     });
 
     return Array.from(uniqueMap.values());
@@ -1366,7 +1397,7 @@
 
     elements.adminProductsList.innerHTML = products.map(function (product) {
       var volumesLine = product.volumes.map(function (volume) {
-        return volume.ml + "ml - " + store.formatPrice(volume.price);
+        return formatMlValue(volume.ml) + "ml - " + store.formatPrice(volume.price);
       }).join(" | " );
 
       var productReviews = Array.isArray(product.reviews) ? product.reviews : [];

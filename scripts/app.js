@@ -657,6 +657,20 @@
     });
   }
 
+  function formatMlValue(value) {
+    if (store && typeof store.formatMl === "function") {
+      return store.formatMl(value);
+    }
+    var numeric = Number(String(value || "").replace(",", "."));
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return "0";
+    }
+    if (Math.abs(numeric - Math.round(numeric)) < 1e-9) {
+      return String(Math.round(numeric));
+    }
+    return String(Math.round(numeric * 100) / 100).replace(".", ",");
+  }
+
   function renderHomepageReviews() {
     if (!elements.homepageReviewsTrack) {
       return;
@@ -814,7 +828,7 @@
   function buildProductCard(product, config) {
     var minPrice = store.getMinPrice(product);
     var volumeOptions = product.volumes.map(function (volume) {
-      return "<option value=\"" + volume.ml + "\">" + volume.ml + " ml - " + store.formatPrice(volume.price) + "</option>";
+      return "<option value=\"" + volume.ml + "\">" + formatMlValue(volume.ml) + " ml - " + store.formatPrice(volume.price) + "</option>";
     }).join("");
     var reviewsHtml = config.compact ? "" : buildProductReviewsBlock(product);
 
@@ -2066,7 +2080,7 @@
           + "  <img src=\"" + escapeHtml(item.image) + "\" alt=\"" + escapeHtml(item.name) + "\">"
           + "  <div class=\"cart-item-main\">"
           + "    <strong>" + escapeHtml(item.name) + "</strong>"
-          + "    <span>" + escapeHtml(item.brand) + " | " + item.ml + " ml</span>"
+          + "    <span>" + escapeHtml(item.brand) + " | " + formatMlValue(item.ml) + " ml</span>"
           + "    <span>" + store.formatPrice(lineTotal) + "</span>"
           + "    <div class=\"cart-item-actions\">"
           + "      <div class=\"qty-controls\">"
