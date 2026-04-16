@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>РђРґРјРёРЅ-РїР°РЅРµР»СЊ | VELIGODSKY.PARFUMS</title>
+  <title>Админ-панель | VELIGODSKY.PARFUMS</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Cormorant+Garamond:wght@500;600;700&display=swap" rel="stylesheet">
@@ -12,169 +12,169 @@
 <body class="admin-page">
   <main class="admin-shell">
     <section class="admin-login" id="adminLoginView">
-      <h1>РђРґРјРёРЅ-РїР°РЅРµР»СЊ</h1>
-      <p>Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ РґР»СЏ РґРѕСЃС‚СѓРїР°</p>
+      <h1>Админ-панель</h1>
+      <p>Введите пароль для доступа</p>
       <form id="adminLoginForm" class="admin-form">
         <label class="field">
-          <span>РџР°СЂРѕР»СЊ</span>
-          <input id="adminPasswordInput" type="password" placeholder="Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ" required>
+          <span>Пароль</span>
+          <input id="adminPasswordInput" type="password" placeholder="Введите пароль" required>
         </label>
-        <button class="btn btn-primary full-width" type="submit">Р’РѕР№С‚Рё</button>
+        <button class="btn btn-primary full-width" type="submit">Войти</button>
       </form>
-      <a class="btn btn-ghost full-width" href="../index.html">Р’РµСЂРЅСѓС‚СЊСЃСЏ РЅР° СЃР°Р№С‚</a>
+      <a class="btn btn-ghost full-width" href="../index.html">Вернуться на сайт</a>
     </section>
 
     <section class="admin-panel hidden" id="adminPanelView">
       <header class="admin-topbar">
         <div>
           <h1>VELIGODSKY.PARFUMS</h1>
-          <p>РЈРїСЂР°РІР»РµРЅРёРµ РєР°С‚Р°Р»РѕРіРѕРј Рё РЅР°СЃС‚СЂРѕР№РєР°РјРё</p>
+          <p>Управление каталогом и настройками</p>
         </div>
         <div class="admin-top-actions">
-          <a class="btn btn-ghost" href="../index.html" target="_blank" rel="noopener noreferrer">РћС‚РєСЂС‹С‚СЊ СЃР°Р№С‚</a>
-          <button class="btn btn-outline" type="button" id="adminLogoutBtn">Р’С‹Р№С‚Рё</button>
+          <a class="btn btn-ghost" href="../index.html" target="_blank" rel="noopener noreferrer">Открыть сайт</a>
+          <button class="btn btn-outline" type="button" id="adminLogoutBtn">Выйти</button>
         </div>
       </header>
 
       <section class="admin-section">
-        <h2>РќР°СЃС‚СЂРѕР№РєРё РјР°РіР°Р·РёРЅР°</h2>
+        <h2>Настройки магазина</h2>
         <form id="settingsForm" class="admin-form admin-grid">
           <label class="field">
-            <span>РЎСЃС‹Р»РєР° РЅР° Telegram-РєР°РЅР°Р»</span>
+            <span>Ссылка на Telegram-канал</span>
             <input type="url" id="telegramChannelInput" required>
           </label>
 
           <label class="field">
-            <span>РЎСЃС‹Р»РєР° РЅР° Р»РёС‡РЅС‹Рµ СЃРѕРѕР±С‰РµРЅРёСЏ Telegram</span>
+            <span>Ссылка на личные сообщения Telegram</span>
             <input type="url" id="telegramDmInput" required>
           </label>
 
           <label class="field">
-            <span>РџРѕСЂРѕРі Р±РµСЃРїР»Р°С‚РЅРѕР№ РґРѕСЃС‚Р°РІРєРё, в‚Ѕ</span>
+            <span>Порог бесплатной доставки, ₽</span>
             <input type="number" id="freeShippingInput" min="0" required>
           </label>
 
           <label class="field">
-            <span>РќРѕРІС‹Р№ РїР°СЂРѕР»СЊ Р°РґРјРёРЅРєРё</span>
-            <input type="text" id="adminPasswordNewInput" placeholder="РћСЃС‚Р°РІСЊС‚Рµ РїСѓСЃС‚С‹Рј, С‡С‚РѕР±С‹ РЅРµ РјРµРЅСЏС‚СЊ">
+            <span>Новый пароль админки</span>
+            <input type="text" id="adminPasswordNewInput" placeholder="Оставьте пустым, чтобы не менять">
           </label>
 
           <div class="field">
-            <span>РџР»Р°С€РєР° Рѕ Р±СЌРєР°РїР°С… РЅР° СЃР°Р№С‚Рµ</span>
+            <span>Плашка о бэкапах на сайте</span>
             <label class="toggle-inline">
               <input type="checkbox" id="backupNoticeEnabledInput">
-              Р’РєР»СЋС‡РµРЅРѕ (РїРѕРєР°Р·С‹РІР°РµС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё СЃ 00:15 РґРѕ 05:00 РїРѕ РњРЎРљ)
+              Включено (показывается автоматически с 00:15 до 05:00 по МСК)
             </label>
           </div>
 
           <label class="field">
-            <span>Р“Р»Р°РІРЅРѕРµ С„РѕС‚Рѕ РЅР° РіР»Р°РІРЅРѕР№ СЃС‚СЂР°РЅРёС†Рµ</span>
+            <span>Главное фото на главной странице</span>
             <input type="file" id="heroImageInput" accept="image/*">
           </label>
 
           <div class="field">
-            <span>РџСЂРµРґРїСЂРѕСЃРјРѕС‚СЂ РіР»Р°РІРЅРѕРіРѕ С„РѕС‚Рѕ</span>
+            <span>Предпросмотр главного фото</span>
             <div class="image-preview-wrap image-preview-wrap--hero">
-              <img id="heroImagePreview" class="image-preview hidden" alt="РџСЂРµРґРїСЂРѕСЃРјРѕС‚СЂ РіР»Р°РІРЅРѕРіРѕ С„РѕС‚Рѕ" src="">
+              <img id="heroImagePreview" class="image-preview hidden" alt="Предпросмотр главного фото" src="">
             </div>
-            <button class="btn btn-ghost" type="button" id="heroImageClearBtn">РЈР±СЂР°С‚СЊ С„РѕС‚Рѕ (РІРµСЂРЅСѓС‚СЊ СЃС‚Р°РЅРґР°СЂС‚РЅРѕРµ)</button>
+            <button class="btn btn-ghost" type="button" id="heroImageClearBtn">Убрать фото (вернуть стандартное)</button>
           </div>
 
-          <button class="btn btn-primary" id="saveSettingsBtn" type="submit">РЎРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё</button>
+          <button class="btn btn-primary" id="saveSettingsBtn" type="submit">Сохранить настройки</button>
         </form>
       </section>
 
       <section class="admin-section">
-        <h2 id="editorTitle">Р”РѕР±Р°РІРёС‚СЊ РїР°СЂС„СЋРј</h2>
+        <h2 id="editorTitle">Добавить парфюм</h2>
         <form id="perfumeForm" class="admin-form">
           <input type="hidden" id="perfumeIdInput">
 
           <div class="admin-grid">
             <label class="field">
-              <span>РќР°Р·РІР°РЅРёРµ Р°СЂРѕРјР°С‚Р°</span>
+              <span>Название аромата</span>
               <input type="text" id="perfumeNameInput" required>
             </label>
 
             <label class="field">
-              <span>Р‘СЂРµРЅРґ</span>
+              <span>Бренд</span>
               <input type="text" id="perfumeBrandInput" required>
             </label>
 
             <label class="field">
-              <span>РџРѕР»</span>
+              <span>Пол</span>
               <select id="perfumeGenderInput" required>
-                <option value="male">РњСѓР¶СЃРєРёРµ</option>
-                <option value="female">Р–РµРЅСЃРєРёРµ</option>
-                <option value="unisex">РЈРЅРёСЃРµРєСЃ</option>
+                <option value="male">Мужские</option>
+                <option value="female">Женские</option>
+                <option value="unisex">Унисекс</option>
               </select>
             </label>
             <label class="field">
-              <span>РўРёРї С„Р»Р°РєРѕРЅР°</span>
+              <span>Тип флакона</span>
               <select id="perfumeBottleTypeInput" required>
-                <option value="full">РџРѕР»РЅРѕС†РµРЅРЅС‹Р№ С„Р»Р°РєРѕРЅ</option>
-                <option value="decant">РћС‚Р»РёРІР°РЅС‚</option>
-                <option value="tester">РўРµСЃС‚РµСЂ</option>
+                <option value="full">Полноценный флакон</option>
+                <option value="decant">Отливант</option>
+                <option value="tester">Тестер</option>
               </select>
             </label>
           </div>
 
           <label class="field">
-            <span>РћРїРёСЃР°РЅРёРµ</span>
-            <textarea id="perfumeDescriptionInput" rows="3" placeholder="РљСЂР°С‚РєРѕРµ РѕРїРёСЃР°РЅРёРµ Р°СЂРѕРјР°С‚Р°"></textarea>
+            <span>Описание</span>
+            <textarea id="perfumeDescriptionInput" rows="3" placeholder="Краткое описание аромата"></textarea>
           </label>
 
           <label class="field">
-            <span>Р¤РѕС‚Рѕ РїР°СЂС„СЋРјР°</span>
+            <span>Фото парфюма</span>
             <input type="file" id="perfumeImageInput" accept="image/*">
           </label>
 
           <div class="image-preview-wrap">
-            <img id="perfumeImagePreview" class="image-preview" alt="РџСЂРµРґРїСЂРѕСЃРјРѕС‚СЂ С„РѕС‚Рѕ" src="">
+            <img id="perfumeImagePreview" class="image-preview" alt="Предпросмотр фото" src="">
           </div>
 
           <div class="top-checkboxes">
-            <label><input type="checkbox" id="topWeekInput"> РўРѕРї РЅРµРґРµР»Рё</label>
-            <label><input type="checkbox" id="topMonthInput"> РўРѕРї РјРµСЃСЏС†Р°</label>
+            <label><input type="checkbox" id="topWeekInput"> Топ недели</label>
+            <label><input type="checkbox" id="topMonthInput"> Топ месяца</label>
           </div>
 
           <div class="volume-block">
             <div class="volume-header">
-              <h3>РћР±СЉС‘РјС‹ Рё С†РµРЅС‹</h3>
-              <button type="button" class="btn btn-ghost" id="addVolumeBtn">Р”РѕР±Р°РІРёС‚СЊ РѕР±СЉС‘Рј</button>
+              <h3>Объёмы и цены</h3>
+              <button type="button" class="btn btn-ghost" id="addVolumeBtn">Добавить объём</button>
             </div>
             <div id="volumesContainer" class="volumes-container"></div>
           </div>
 
           <div class="editor-actions">
-            <button class="btn btn-primary" type="submit">РЎРѕС…СЂР°РЅРёС‚СЊ РїР°СЂС„СЋРј</button>
-            <button class="btn btn-ghost" type="button" id="cancelEditBtn">РћС‡РёСЃС‚РёС‚СЊ С„РѕСЂРјСѓ</button>
+            <button class="btn btn-primary" type="submit">Сохранить парфюм</button>
+            <button class="btn btn-ghost" type="button" id="cancelEditBtn">Очистить форму</button>
           </div>
         </form>
       </section>
 
       <section class="admin-section">
-        <h2>РљР°С‚Р°Р»РѕРі</h2>
+        <h2>Каталог</h2>
         <div id="adminProductsList" class="admin-products"></div>
       </section>
 
       <section class="admin-section">
-        <h2 id="homepageReviewsEditorTitle">Р”РѕР±Р°РІРёС‚СЊ РѕС‚Р·С‹РІ РЅР° РіР»Р°РІРЅСѓСЋ</h2>
+        <h2 id="homepageReviewsEditorTitle">Добавить отзыв на главную</h2>
         <form id="homepageReviewForm" class="admin-form">
           <input type="hidden" id="homepageReviewIdInput">
 
           <div class="admin-grid">
             <label class="field">
-              <span>РРјСЏ</span>
+              <span>Имя</span>
               <input type="text" id="homepageReviewAuthorInput" maxlength="80" required>
             </label>
 
             <label class="field">
-              <span>Р“РѕСЂРѕРґ</span>
-              <input type="text" id="homepageReviewCityInput" maxlength="80" placeholder="РќРµРѕР±СЏР·Р°С‚РµР»СЊРЅРѕ">
+              <span>Город</span>
+              <input type="text" id="homepageReviewCityInput" maxlength="80" placeholder="Необязательно">
             </label>
 
             <label class="field">
-              <span>РћС†РµРЅРєР°</span>
+              <span>Оценка</span>
               <select id="homepageReviewRatingInput" required>
                 <option value="5">5</option>
                 <option value="4">4</option>
@@ -186,23 +186,23 @@
           </div>
 
           <label class="field">
-            <span>РўРµРєСЃС‚ РѕС‚Р·С‹РІР°</span>
+            <span>Текст отзыва</span>
             <textarea id="homepageReviewTextInput" rows="4" maxlength="500" required></textarea>
           </label>
 
           <div class="editor-actions">
-            <button class="btn btn-primary" type="submit">РЎРѕС…СЂР°РЅРёС‚СЊ РѕС‚Р·С‹РІ</button>
-            <button class="btn btn-ghost" type="button" id="homepageReviewResetBtn">РћС‡РёСЃС‚РёС‚СЊ С„РѕСЂРјСѓ</button>
+            <button class="btn btn-primary" type="submit">Сохранить отзыв</button>
+            <button class="btn btn-ghost" type="button" id="homepageReviewResetBtn">Очистить форму</button>
           </div>
         </form>
 
         <div class="admin-subsection">
-          <h3>РћС‚Р·С‹РІС‹ РЅР° РјРѕРґРµСЂР°С†РёРё</h3>
+          <h3>Отзывы на модерации</h3>
           <div id="adminPendingHomepageReviewsList" class="admin-reviews"></div>
         </div>
 
         <div class="admin-subsection">
-          <h3>РћРїСѓР±Р»РёРєРѕРІР°РЅРЅС‹Рµ РѕС‚Р·С‹РІС‹</h3>
+          <h3>Опубликованные отзывы</h3>
           <div id="adminHomepageReviewsList" class="admin-reviews"></div>
         </div>
       </section>
@@ -215,4 +215,3 @@
   <script src="../scripts/admin.js"></script>
 </body>
 </html>
-
