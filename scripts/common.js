@@ -273,6 +273,87 @@
     return Boolean(fallback);
   }
 
+  function countMojibakeMarkers(value) {
+    var source = String(value || "");
+    if (!source) {
+      return 0;
+    }
+    var matches = source.match(/в‚|вЂ|[Ѓѓ‚…†‡€‰ЉЊЋЏђ‘’“”•–—™љњћџЎўЈҐЄІіґ№єјЅѕї]/g);
+    return matches ? matches.length : 0;
+  }
+
+  function isLikelyMojibake(value) {
+    var source = String(value || "");
+    if (!source) {
+      return false;
+    }
+    if (countMojibakeMarkers(source) >= 2) {
+      return true;
+    }
+    var pairMatches = source.match(/(?:Р.|С.)/g);
+    return Array.isArray(pairMatches) && pairMatches.length >= 3;
+  }
+
+  function toWindows1251Byte(charCode) {
+    if (charCode >= 0 && charCode <= 0x7F) {
+      return charCode;
+    }
+    if (charCode >= 0x0410 && charCode <= 0x044F) {
+      return charCode - 0x350;
+    }
+    if (charCode === 0x0401) {
+      return 0xA8;
+    }
+    if (charCode === 0x0451) {
+      return 0xB8;
+    }
+
+    var extraMap = {
+      0x0402: 0x80, 0x0403: 0x81, 0x201A: 0x82, 0x0453: 0x83, 0x201E: 0x84, 0x2026: 0x85,
+      0x2020: 0x86, 0x2021: 0x87, 0x20AC: 0x88, 0x2030: 0x89, 0x0409: 0x8A, 0x2039: 0x8B,
+      0x040A: 0x8C, 0x040C: 0x8D, 0x040B: 0x8E, 0x040F: 0x8F, 0x0452: 0x90, 0x2018: 0x91,
+      0x2019: 0x92, 0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
+      0x2122: 0x99, 0x0459: 0x9A, 0x203A: 0x9B, 0x045A: 0x9C, 0x045C: 0x9D, 0x045B: 0x9E,
+      0x045F: 0x9F, 0x00A0: 0xA0, 0x040E: 0xA1, 0x045E: 0xA2, 0x0408: 0xA3, 0x00A4: 0xA4,
+      0x0490: 0xA5, 0x00A6: 0xA6, 0x00A7: 0xA7, 0x00A9: 0xA9, 0x0404: 0xAA, 0x00AB: 0xAB,
+      0x00AC: 0xAC, 0x00AD: 0xAD, 0x00AE: 0xAE, 0x0407: 0xAF, 0x00B0: 0xB0, 0x00B1: 0xB1,
+      0x0406: 0xB2, 0x0456: 0xB3, 0x0491: 0xB4, 0x00B5: 0xB5, 0x00B6: 0xB6, 0x00B7: 0xB7,
+      0x2116: 0xB9, 0x0454: 0xBA, 0x00BB: 0xBB, 0x0458: 0xBC, 0x0405: 0xBD, 0x0455: 0xBE,
+      0x0457: 0xBF
+    };
+
+    if (Object.prototype.hasOwnProperty.call(extraMap, charCode)) {
+      return extraMap[charCode];
+    }
+    return null;
+  }
+
+  function repairMojibake(value) {
+    var source = String(value || "");
+    if (!source || !isLikelyMojibake(source) || typeof TextDecoder !== "function") {
+      return source;
+    }
+
+    var bytes = [];
+    for (var index = 0; index < source.length; index += 1) {
+      var byteValue = toWindows1251Byte(source.charCodeAt(index));
+      if (byteValue === null) {
+        return source;
+      }
+      bytes.push(byteValue);
+    }
+
+    try {
+      var repaired = new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+      if (!repaired) {
+        return source;
+      }
+      return countMojibakeMarkers(repaired) < countMojibakeMarkers(source) ? repaired : source;
+    } catch (error) {
+      return source;
+    }
+  }
+
   function pickImage(value, idx) {
     if (typeof value === "string" && value.trim()) {
       return value;
@@ -330,13 +411,13 @@
     }
 
     var safeOptions = options || {};
-    var author = String(review.author || review.name || "").trim();
-    var text = String(review.text || review.message || "").trim();
+    var author = repairMojibake(String(review.author || review.name || "").trim());
+    var text = repairMojibake(String(review.text || review.message || "").trim());
     if (!author || !text) {
       return null;
     }
 
-    var city = String(review.city || "").trim();
+    var city = repairMojibake(String(review.city || "").trim());
     var rating = Math.round(toNumber(review.rating, 5));
     if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
       rating = 5;
@@ -426,8 +507,8 @@
       return null;
     }
 
-    var name = String(product.name || "").trim();
-    var brand = String(product.brand || "").trim();
+    var name = repairMojibake(String(product.name || "").trim());
+    var brand = repairMojibake(String(product.brand || "").trim());
     if (!name || !brand) {
       return null;
     }
@@ -451,7 +532,7 @@
       brand: brand,
       gender: gender,
       bottleType: normalizeBottleType(product.bottleType),
-      description: String(product.description || "").trim(),
+      description: repairMojibake(String(product.description || "").trim()),
       image: pickImage(product.image, idx),
       volumes: normalizedVolumes,
       reviews: normalizeReviewList(product.reviews, {
@@ -493,6 +574,7 @@
 
     var settings = Object.assign({}, defaults.settings, safe.settings || {});
     settings.freeShippingThreshold = Math.max(0, Math.round(toNumber(settings.freeShippingThreshold, defaults.settings.freeShippingThreshold)));
+    settings.storeName = repairMojibake(String(settings.storeName || defaults.settings.storeName));
     settings.telegramChannel = String(settings.telegramChannel || defaults.settings.telegramChannel);
     settings.telegramDM = String(settings.telegramDM || defaults.settings.telegramDM);
     if (Object.prototype.hasOwnProperty.call(settings, "adminPassword")) {
@@ -1049,8 +1131,8 @@
     }
 
     var productId = String(item.productId || "").trim();
-    var name = String(item.name || "").trim();
-    var brand = String(item.brand || "").trim();
+    var name = repairMojibake(String(item.name || "").trim());
+    var brand = repairMojibake(String(item.brand || "").trim());
     var ml = normalizeMlValue(item.ml, 0);
     var price = Math.round(toNumber(item.price));
     var qty = Math.max(1, Math.round(toNumber(item.qty, 1)));
@@ -1111,7 +1193,7 @@
     });
 
     if (!product) {
-      return { ok: false, message: "РўРѕРІР°СЂ РЅРµ РЅР°Р№РґРµРЅ." };
+      return { ok: false, message: "Товар не найден." };
     }
 
     var volume = product.volumes.find(function (item) {
@@ -1119,7 +1201,7 @@
     });
 
     if (!volume) {
-      return { ok: false, message: "Р’С‹Р±РµСЂРёС‚Рµ РѕР±СЉРµРј Р°СЂРѕРјР°С‚Р°." };
+      return { ok: false, message: "Выберите объём аромата." };
     }
 
     var cart = getCart();
@@ -1206,7 +1288,7 @@
 
   function formatPrice(value) {
     var amount = Math.round(toNumber(value, 0));
-    return numberFormatter.format(amount) + " в‚Ѕ";
+    return numberFormatter.format(amount) + " ₽";
   }
 
   function getMinPrice(product) {
@@ -1229,22 +1311,22 @@
 
   function getGenderLabel(gender) {
     if (gender === "male") {
-      return "РњСѓР¶СЃРєРёРµ";
+      return "Мужские";
     }
     if (gender === "female") {
-      return "Р–РµРЅСЃРєРёРµ";
+      return "Женские";
     }
-    return "РЈРЅРёСЃРµРєСЃ";
+    return "Унисекс";
   }
   function getBottleTypeLabel(type) {
     var safe = normalizeBottleType(type);
     if (safe === "decant") {
-      return "РћС‚Р»РёРІР°РЅС‚";
+      return "Отливант";
     }
     if (safe === "tester") {
-      return "РўРµСЃС‚РµСЂ";
+      return "Тестер";
     }
-    return "РџРѕР»РЅРѕС†РµРЅРЅС‹Р№ С„Р»Р°РєРѕРЅ";
+    return "Полноценный флакон";
   }
   function buildTelegramOrderMessage(cart, sample, settings) {
     var safeCart = Array.isArray(cart) ? cart : getCart();
@@ -1254,27 +1336,27 @@
     }, 0);
     var lines = [];
 
-    lines.push("Р—РґСЂР°РІСЃС‚РІСѓР№С‚Рµ! РҐРѕС‡Сѓ РѕС„РѕСЂРјРёС‚СЊ Р·Р°РєР°Р· РІ " + safeSettings.storeName + ".");
+    lines.push("Здравствуйте! Хочу оформить заказ в " + safeSettings.storeName + ".");
     lines.push("");
-    lines.push("РЎРѕСЃС‚Р°РІ Р·Р°РєР°Р·Р°:");
+    lines.push("Состав заказа:");
 
     safeCart.forEach(function (item, index) {
       var lineTotal = item.price * item.qty;
-      lines.push((index + 1) + ". " + item.name + " (" + item.brand + ", " + getBottleTypeLabel(item.bottleType) + ") - " + formatMl(item.ml) + " РјР» x " + item.qty + " = " + formatPrice(lineTotal));
+      lines.push((index + 1) + ". " + item.name + " (" + item.brand + ", " + getBottleTypeLabel(item.bottleType) + ") - " + formatMl(item.ml) + " мл x " + item.qty + " = " + formatPrice(lineTotal));
     });
 
     lines.push("");
-    lines.push("РС‚РѕРіРѕ: " + formatPrice(total));
+    lines.push("Итого: " + formatPrice(total));
 
     if (total >= safeSettings.freeShippingThreshold) {
-      lines.push("Р”РѕСЃС‚Р°РІРєР°: Р‘РµСЃРїР»Р°С‚РЅР°СЏ");
+      lines.push("Доставка: Бесплатная");
     } else {
-      lines.push("Р”Рѕ Р±РµСЃРїР»Р°С‚РЅРѕР№ РґРѕСЃС‚Р°РІРєРё: " + formatPrice(safeSettings.freeShippingThreshold - total));
+      lines.push("До бесплатной доставки: " + formatPrice(safeSettings.freeShippingThreshold - total));
     }
 
     var gift = String(sample || "").trim();
-    lines.push("РџСЂРѕР±РЅРёРє 2ml: " + (gift || "РЅРµ СѓРєР°Р·Р°РЅ"));
-    lines.push("Р”Р°С‚Р° Р·Р°РєР°Р·Р°: " + new Date().toLocaleString("ru-RU"));
+    lines.push("Пробник 2ml: " + (gift || "не указан"));
+    lines.push("Дата заказа: " + new Date().toLocaleString("ru-RU"));
 
     return lines.join("\n");
   }
