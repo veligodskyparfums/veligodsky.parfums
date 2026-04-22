@@ -11,6 +11,10 @@
   var API_HOMEPAGE_REVIEWS_URL = "/api/homepage-reviews";
   var API_PRODUCT_REVIEWS_URL = "/api/product-reviews";
   var ADMIN_TOKEN_KEY = "veligodsky_admin_token_v1";
+  var UNSYNCED_CHANGES_KEY = "veligodsky_unsynced_changes_v1";
+  var REMOTE_READ_TIMEOUT_MS = 8000;
+  var REMOTE_WRITE_TIMEOUT_MS = 12000;
+  var REVIEW_TIMEOUT_MS = 10000;
   var numberFormatter = new Intl.NumberFormat("ru-RU");
   var dataCache = null;
   var syncPromise = null;
@@ -657,6 +661,88 @@
     return /^https?:$/i.test(window.location.protocol);
   }
 
+  function fetchWithTimeout(url, options, timeoutMs) {
+    var safeTimeout = Math.max(1000, Math.round(toNumber(timeoutMs, REMOTE_READ_TIMEOUT_MS)));
+    var controller = typeof AbortController === "function" ? new AbortController() : null;
+    var timerId = null;
+    var requestOptions = Object.assign({}, options || {});
+
+    if (controller) {
+      requestOptions.signal = controller.signal;
+      timerId = setTimeout(function () {
+        controller.abort();
+      }, safeTimeout);
+    }
+
+    return fetch(url, requestOptions)
+      .catch(function (error) {
+        if (error && error.name === "AbortError") {
+          throw new Error("NETWORK_TIMEOUT");
+        }
+        throw error;
+      })
+      .finally(function () {
+        if (timerId) {
+          clearTimeout(timerId);
+        }
+      });
+  }
+
+  function parseHttpStatusFromError(error) {
+    var message = String(error && error.message || "");
+    var match = message.match(/HTTP\s+(\d{3})/);
+    if (!match) {
+      return 0;
+    }
+    return Math.round(Number(match[1]) || 0);
+  }
+
+  function shouldThrowCommitError(error) {
+    var message = String(error && error.message || "");
+    if (!message) {
+      return false;
+    }
+
+    if (message.indexOf("UNAUTHORIZED") >= 0) {
+      return true;
+    }
+
+    var status = parseHttpStatusFromError(error);
+    if (status === 401 || status === 403 || status === 413) {
+      return true;
+    }
+
+    if (status >= 400 && status < 500 && status !== 429) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function hasPendingUnsyncedChanges() {
+    try {
+      return localStorage.getItem(UNSYNCED_CHANGES_KEY) === "1";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function markPendingUnsyncedChanges() {
+    try {
+      localStorage.setItem(UNSYNCED_CHANGES_KEY, "1");
+    } catch (error) {
+      return;
+    }
+  }
+
+  function clearPendingUnsyncedChanges() {
+    try {
+      localStorage.removeItem(UNSYNCED_CHANGES_KEY);
+    } catch (error) {
+      return;
+    }
+  }
+
   function getStoredAdminToken() {
     if (adminTokenMemory) {
       return adminTokenMemory;
@@ -707,14 +793,14 @@
       throw new Error("REMOTE_STORE_REQUIRED");
     }
 
-    var response = await fetch(API_ADMIN_AUTH_URL, {
+    var response = await fetchWithTimeout(API_ADMIN_AUTH_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
       body: JSON.stringify({ password: safePassword })
-    });
+    }, REMOTE_WRITE_TIMEOUT_MS);
 
     if (response.status === 401) {
       clearStoredAdminToken();
@@ -762,7 +848,7 @@
       throw new Error("UNAUTHORIZED");
     }
 
-    var response = await fetch(API_ADMIN_PASSWORD_URL, {
+    var response = await fetchWithTimeout(API_ADMIN_PASSWORD_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -770,7 +856,7 @@
         "Authorization": "Bearer " + adminToken
       },
       body: JSON.stringify({ newPassword: safePassword })
-    });
+    }, REMOTE_WRITE_TIMEOUT_MS);
 
     if (response.status === 401) {
       clearStoredAdminToken();
@@ -805,11 +891,11 @@
       headers.Authorization = "Bearer " + adminToken;
     }
 
-    var response = await fetch(API_DATA_URL + "?ts=" + Date.now(), {
+    var response = await fetchWithTimeout(API_DATA_URL + "?ts=" + Date.now(), {
       method: "GET",
       cache: "no-store",
       headers: headers
-    });
+    }, REMOTE_READ_TIMEOUT_MS);
 
     if (!response.ok) {
       throw new Error("HTTP " + response.status);
@@ -829,11 +915,11 @@
       headers.Authorization = "Bearer " + adminToken;
     }
 
-    var response = await fetch(API_DATA_URL, {
+    var response = await fetchWithTimeout(API_DATA_URL, {
       method: "PUT",
       headers: headers,
       body: JSON.stringify(normalizeData(data))
-    });
+    }, REMOTE_WRITE_TIMEOUT_MS);
 
     if (response.status === 401) {
       clearStoredAdminToken();
@@ -847,11 +933,35 @@
     return normalizeData(payload);
   }
 
+  async function tryFlushPendingUnsyncedData() {
+    if (!canUseRemoteStore() || !hasPendingUnsyncedChanges()) {
+      return false;
+    }
+
+    var local = loadData();
+    var remote = await pushRemoteData(local);
+    saveData(remote);
+    clearPendingUnsyncedChanges();
+    return true;
+  }
+
   async function init() {
     loadData();
 
     if (!canUseRemoteStore()) {
       return loadData();
+    }
+
+    if (hasPendingUnsyncedChanges()) {
+      try {
+        await tryFlushPendingUnsyncedData();
+      } catch (error) {
+        return loadData();
+      }
+
+      if (hasPendingUnsyncedChanges()) {
+        return loadData();
+      }
     }
 
     try {
@@ -871,8 +981,24 @@
       return syncPromise;
     }
 
-    syncPromise = fetchRemoteData()
-      .then(function (remote) {
+    syncPromise = Promise.resolve()
+      .then(async function () {
+        if (hasPendingUnsyncedChanges()) {
+          try {
+            await tryFlushPendingUnsyncedData();
+          } catch (error) {
+            if (shouldThrowCommitError(error)) {
+              throw error;
+            }
+            return loadData();
+          }
+
+          if (hasPendingUnsyncedChanges()) {
+            return loadData();
+          }
+        }
+
+        var remote = await fetchRemoteData();
         return saveData(remote);
       })
       .finally(function () {
@@ -889,8 +1015,17 @@
       return normalized;
     }
 
-    var remote = await pushRemoteData(normalized);
-    return saveData(remote);
+    try {
+      var remote = await pushRemoteData(normalized);
+      clearPendingUnsyncedChanges();
+      return saveData(remote);
+    } catch (error) {
+      if (shouldThrowCommitError(error)) {
+        throw error;
+      }
+      markPendingUnsyncedChanges();
+      return normalized;
+    }
   }
 
   function getProducts() {
@@ -1007,14 +1142,14 @@
       termsVersion: String(reviewPayload && reviewPayload.termsVersion || "").trim()
     };
 
-    var response = await fetch(API_PRODUCT_REVIEWS_URL, {
+    var response = await fetchWithTimeout(API_PRODUCT_REVIEWS_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
       body: JSON.stringify(payload)
-    });
+    }, REVIEW_TIMEOUT_MS);
 
     if (response.status === 429) {
       var retryAfter = Math.max(0, Math.round(Number(response.headers.get("Retry-After")) || 0));
@@ -1063,14 +1198,14 @@
       termsVersion: String(reviewPayload && reviewPayload.termsVersion || "").trim()
     };
 
-    var response = await fetch(API_HOMEPAGE_REVIEWS_URL, {
+    var response = await fetchWithTimeout(API_HOMEPAGE_REVIEWS_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
       body: JSON.stringify(payload)
-    });
+    }, REVIEW_TIMEOUT_MS);
 
     if (response.status === 429) {
       var retryAfter = Math.max(0, Math.round(Number(response.headers.get("Retry-After")) || 0));
@@ -1096,13 +1231,13 @@
   }
 
   async function fetchReviewCaptcha() {
-    var response = await fetch(API_REVIEW_CAPTCHA_URL + "?ts=" + Date.now(), {
+    var response = await fetchWithTimeout(API_REVIEW_CAPTCHA_URL + "?ts=" + Date.now(), {
       method: "GET",
       cache: "no-store",
       headers: {
         "Accept": "application/json"
       }
-    });
+    }, REVIEW_TIMEOUT_MS);
 
     if (!response.ok) {
       throw new Error("HTTP " + response.status);

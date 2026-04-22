@@ -262,6 +262,11 @@
     try {
       await store.loginAdmin(inputPassword);
     } catch (error) {
+      var loginErrorMessage = String(error && error.message || "");
+      if (loginErrorMessage.indexOf("NETWORK_TIMEOUT") >= 0 || loginErrorMessage.indexOf("Failed to fetch") >= 0) {
+        showToast("Сервер входа временно недоступен. Проверьте интернет и попробуйте снова.", true);
+        return;
+      }
       if (String(error && error.message || "").indexOf("ADMIN_LOGIN_TEMP_BLOCKED:") === 0) {
         var waitSeconds = Math.max(0, Math.round(Number(String(error.message).split(":")[1]) || 0));
         if (waitSeconds > 0) {
@@ -957,27 +962,36 @@
       topMonth: elements.topMonthInput.checked
     };
 
-    try {
-      if (existing) {
-        var next = products.map(function (item) {
-          return item.id === existing.id ? payload : item;
-        });
-        await store.saveProducts(next);
-        showToast("Товар обновлён");
-      } else {
-        products.unshift(payload);
-        await store.saveProducts(products);
-        showToast("Товар добавлен");
-      }
+    var nextProducts = existing
+      ? products.map(function (item) {
+        return item.id === existing.id ? payload : item;
+      })
+      : [payload].concat(products);
+    var isEditing = Boolean(existing);
 
-      renderProducts();
-      resetEditor();
+    var savePromise = store.saveProducts(nextProducts);
+
+    renderProducts();
+    resetEditor();
+    showToast(isEditing
+      ? "Изменения применены. Синхронизируем с сервером..."
+      : "Товар добавлен. Синхронизируем с сервером...");
+
+    try {
+      await savePromise;
+      showToast(isEditing ? "Товар обновлён" : "Товар добавлен");
     } catch (error) {
-      if (String(error && error.message || "").indexOf("413") >= 0) {
-        showToast("Фото слишком тяжелое для сервера. Уменьшите размер.", true);
+      var message = String(error && error.message || "");
+      if (message.indexOf("401") >= 0 || message.indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
         return;
       }
-      showToast("Не удалось сохранить товар на сервер.", true);
+      if (message.indexOf("413") >= 0) {
+        showToast("Сохранено локально, но фото слишком тяжелое для сервера. Уменьшите размер и сохраните снова.", true);
+        return;
+      }
+      showToast("Сохранено локально. Когда интернет стабилизируется, данные синхронизируются с сервером.", true);
     }
   }
 
