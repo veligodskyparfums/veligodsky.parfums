@@ -15,6 +15,13 @@
   var REVIEW_IMAGE_QUALITY_START = 0.82;
   var REVIEW_IMAGE_QUALITY_MIN = 0.55;
   var REVIEW_SYNC_PAUSE_AFTER_INTERACTION_MS = 10 * 60 * 1000;
+  var AUTO_SYNC_BASE_INTERVAL_MS = 30 * 1000;
+  var AUTO_SYNC_MIN_INTERVAL_MS = 12 * 1000;
+  var AUTO_SYNC_HIDDEN_INTERVAL_MS = 90 * 1000;
+  var AUTO_SYNC_OFFLINE_INTERVAL_MS = 120 * 1000;
+  var AUTO_SYNC_RETRY_BASE_MS = 15 * 1000;
+  var AUTO_SYNC_MAX_BACKOFF_MS = 8 * 60 * 1000;
+  var AUTO_SYNC_FOCUS_DELAY_MS = 1500;
   var MAX_HERO_IMAGE_LENGTH = 900 * 1024;
   var REVIEWS_COLLAPSED_KEY = "veligodsky_reviews_collapsed_v1";
   var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
@@ -39,6 +46,10 @@
   var revealObserver = null;
   var toastTimer = null;
   var syncIntervalId = null;
+  var syncInFlight = false;
+  var syncFailureCount = 0;
+  var autoSyncVisibilityBound = false;
+  var autoSyncNetworkBound = false;
   var backupNoticeTimerId = null;
   var moscowTimeFormatter = null;
 
@@ -272,10 +283,7 @@
     document.addEventListener("submit", handleDocumentSubmit);
 
     window.addEventListener("focus", function () {
-      if (shouldPauseAutoSync()) {
-        return;
-      }
-      refreshFromServer(false);
+      scheduleAutoSync(AUTO_SYNC_FOCUS_DELAY_MS);
     });
 
     window.addEventListener("resize", updateHomepageReviewsNavState);
@@ -379,13 +387,16 @@
     captureProductReviewDraftsFromDom();
     if (shouldPauseAutoSync()) {
       restoreReviewDrafts();
-      return;
+      return { synced: false, skipped: true };
     }
 
+    var syncSucceeded = typeof store.syncFromServer !== "function";
     if (typeof store.syncFromServer === "function") {
       try {
         await store.syncFromServer();
+        syncSucceeded = true;
       } catch (error) {
+        syncSucceeded = false;
         if (showErrorToast) {
           showToast("Не удалось обновить данные с сервера.", true);
         }
@@ -402,32 +413,206 @@
     applyFilters(false);
     restoreReviewDrafts();
     renderCart();
+    return { synced: syncSucceeded, skipped: false };
+  }
+
+  function getNavigatorConnection() {
+    var nav = typeof navigator !== "undefined" ? navigator : null;
+    if (!nav) {
+      return null;
+    }
+    return nav.connection || nav.mozConnection || nav.webkitConnection || null;
+  }
+
+  function getAutoSyncNetworkMultiplier() {
+    var nav = typeof navigator !== "undefined" ? navigator : null;
+    if (!nav) {
+      return 1;
+    }
+
+    if (nav.onLine === false) {
+      return 4;
+    }
+
+    var connection = getNavigatorConnection();
+    if (!connection) {
+      return 1;
+    }
+
+    if (connection.saveData) {
+      return 2.2;
+    }
+
+    var effectiveType = String(connection.effectiveType || "").toLowerCase();
+    if (effectiveType === "slow-2g") {
+      return 3.5;
+    }
+    if (effectiveType === "2g") {
+      return 3;
+    }
+    if (effectiveType === "3g") {
+      return 1.8;
+    }
+
+    var downlink = Number(connection.downlink);
+    if (Number.isFinite(downlink) && downlink > 0 && downlink < 1.2) {
+      return 1.8;
+    }
+
+    return 1;
+  }
+
+  function getAutoSyncBaseIntervalMs() {
+    var base = AUTO_SYNC_BASE_INTERVAL_MS;
+
+    if (document.hidden) {
+      base = Math.max(base, AUTO_SYNC_HIDDEN_INTERVAL_MS);
+    }
+
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      base = Math.max(base, AUTO_SYNC_OFFLINE_INTERVAL_MS);
+    }
+
+    base = Math.round(base * getAutoSyncNetworkMultiplier());
+    return Math.max(AUTO_SYNC_MIN_INTERVAL_MS, base);
+  }
+
+  function getAutoSyncBackoffDelayMs() {
+    if (!Number.isFinite(syncFailureCount) || syncFailureCount <= 0) {
+      return 0;
+    }
+
+    var delay = AUTO_SYNC_RETRY_BASE_MS * Math.pow(2, Math.min(syncFailureCount, 6));
+    return Math.min(AUTO_SYNC_MAX_BACKOFF_MS, delay);
+  }
+
+  function getReviewSyncPauseRemainingMs() {
+    if (!Number.isFinite(state.lastReviewInteractionAt) || state.lastReviewInteractionAt <= 0) {
+      return 0;
+    }
+    var elapsed = Date.now() - state.lastReviewInteractionAt;
+    if (!Number.isFinite(elapsed) || elapsed >= REVIEW_SYNC_PAUSE_AFTER_INTERACTION_MS) {
+      return 0;
+    }
+    return Math.max(0, REVIEW_SYNC_PAUSE_AFTER_INTERACTION_MS - elapsed);
+  }
+
+  function computeNextAutoSyncDelayMs(explicitDelayMs) {
+    if (Number.isFinite(explicitDelayMs) && explicitDelayMs >= 0) {
+      return Math.max(0, Math.round(explicitDelayMs));
+    }
+
+    var baseDelay = getAutoSyncBaseIntervalMs();
+    var backoffDelay = getAutoSyncBackoffDelayMs();
+    if (backoffDelay > 0) {
+      baseDelay = Math.max(baseDelay, backoffDelay);
+    }
+
+    if (shouldPauseAutoSync()) {
+      var pauseRemaining = getReviewSyncPauseRemainingMs();
+      if (pauseRemaining > 0) {
+        return Math.min(120 * 1000, Math.max(AUTO_SYNC_MIN_INTERVAL_MS, pauseRemaining + 250));
+      }
+      return Math.max(baseDelay, 60 * 1000);
+    }
+
+    return Math.max(AUTO_SYNC_MIN_INTERVAL_MS, Math.round(baseDelay));
+  }
+
+  function clearAutoSyncTimer() {
+    if (!syncIntervalId) {
+      return;
+    }
+    clearTimeout(syncIntervalId);
+    syncIntervalId = null;
+  }
+
+  function scheduleAutoSync(explicitDelayMs) {
+    if (typeof store.syncFromServer !== "function") {
+      return;
+    }
+
+    clearAutoSyncTimer();
+    var delay = computeNextAutoSyncDelayMs(explicitDelayMs);
+    syncIntervalId = setTimeout(function () {
+      runAutoSyncTick();
+    }, delay);
+  }
+
+  async function runAutoSyncTick() {
+    if (typeof store.syncFromServer !== "function") {
+      return;
+    }
+
+    if (syncInFlight) {
+      scheduleAutoSync(AUTO_SYNC_MIN_INTERVAL_MS);
+      return;
+    }
+
+    if (shouldPauseAutoSync()) {
+      scheduleAutoSync();
+      return;
+    }
+
+    syncInFlight = true;
+    var result = { synced: false, skipped: false };
+    try {
+      result = await refreshFromServer(false);
+    } catch (error) {
+      result = { synced: false, skipped: false };
+    } finally {
+      syncInFlight = false;
+    }
+
+    if (result && result.synced) {
+      syncFailureCount = 0;
+    } else if (!(result && result.skipped)) {
+      syncFailureCount = Math.min(12, syncFailureCount + 1);
+    }
+
+    scheduleAutoSync();
+  }
+
+  function bindAutoSyncListeners() {
+    if (!autoSyncVisibilityBound) {
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) {
+          scheduleAutoSync(AUTO_SYNC_FOCUS_DELAY_MS);
+          return;
+        }
+        scheduleAutoSync();
+      });
+      autoSyncVisibilityBound = true;
+    }
+
+    if (!autoSyncNetworkBound) {
+      window.addEventListener("online", function () {
+        syncFailureCount = 0;
+        scheduleAutoSync(1000);
+      });
+
+      window.addEventListener("offline", function () {
+        scheduleAutoSync(AUTO_SYNC_OFFLINE_INTERVAL_MS);
+      });
+
+      var connection = getNavigatorConnection();
+      if (connection && typeof connection.addEventListener === "function") {
+        connection.addEventListener("change", function () {
+          scheduleAutoSync();
+        });
+      }
+
+      autoSyncNetworkBound = true;
+    }
   }
 
   function startAutoSync() {
     if (typeof store.syncFromServer !== "function") {
       return;
     }
-
-    if (syncIntervalId) {
-      clearInterval(syncIntervalId);
-    }
-
-    syncIntervalId = setInterval(function () {
-      if (shouldPauseAutoSync()) {
-        return;
-      }
-      refreshFromServer(false);
-    }, 30000);
-
-    document.addEventListener("visibilitychange", function () {
-      if (!document.hidden) {
-        if (shouldPauseAutoSync()) {
-          return;
-        }
-        refreshFromServer(false);
-      }
-    });
+    bindAutoSyncListeners();
+    syncFailureCount = 0;
+    scheduleAutoSync(AUTO_SYNC_BASE_INTERVAL_MS);
   }
 
   function syncSettingsToUI() {
