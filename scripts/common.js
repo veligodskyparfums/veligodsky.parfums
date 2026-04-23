@@ -19,6 +19,7 @@
   var dataCache = null;
   var syncPromise = null;
   var adminTokenMemory = "";
+  var remoteDataEtag = "";
 
   var placeholderImages = [
     "https://images.unsplash.com/photo-1595425970377-c9703cf48b6d?auto=format&fit=crop&w=900&q=80",
@@ -890,15 +891,32 @@
     if (adminToken) {
       headers.Authorization = "Bearer " + adminToken;
     }
+    if (remoteDataEtag) {
+      headers["If-None-Match"] = remoteDataEtag;
+    }
 
-    var response = await fetchWithTimeout(API_DATA_URL + "?ts=" + Date.now(), {
+    var response = await fetchWithTimeout(API_DATA_URL, {
       method: "GET",
-      cache: "no-store",
+      cache: "no-cache",
       headers: headers
     }, REMOTE_READ_TIMEOUT_MS);
 
+    if (response.status === 304) {
+      return loadData();
+    }
+
     if (!response.ok) {
       throw new Error("HTTP " + response.status);
+    }
+
+    var etag = "";
+    try {
+      etag = String(response.headers.get("etag") || "").trim();
+    } catch (error) {
+      etag = "";
+    }
+    if (etag) {
+      remoteDataEtag = etag;
     }
 
     var payload = await response.json();
@@ -927,6 +945,16 @@
 
     if (!response.ok) {
       throw new Error("HTTP " + response.status);
+    }
+
+    var etag = "";
+    try {
+      etag = String(response.headers.get("etag") || "").trim();
+    } catch (error) {
+      etag = "";
+    }
+    if (etag) {
+      remoteDataEtag = etag;
     }
 
     var payload = await response.json();

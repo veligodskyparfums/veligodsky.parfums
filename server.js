@@ -13,6 +13,11 @@ const DATA_DIR = path.join(ROOT_DIR, "data");
 const DATA_FILE = path.join(DATA_DIR, "store-data.json");
 const DB_TABLE = "store_state";
 const MAX_BODY_SIZE = 30 * 1024 * 1024;
+const REQUEST_BODY_TIMEOUT_MS = Math.max(5000, Number(process.env.REQUEST_BODY_TIMEOUT_MS || 20 * 1000));
+const SERVER_REQUEST_TIMEOUT_MS = Math.max(10 * 1000, Number(process.env.SERVER_REQUEST_TIMEOUT_MS || 30 * 1000));
+const SERVER_KEEP_ALIVE_TIMEOUT_MS = Math.max(1000, Number(process.env.SERVER_KEEP_ALIVE_TIMEOUT_MS || 5000));
+const STATIC_CACHE_MAX_AGE_SEC = Math.max(0, Number(process.env.STATIC_CACHE_MAX_AGE_SEC || 300));
+const STATIC_STALE_WHILE_REVALIDATE_SEC = Math.max(0, Number(process.env.STATIC_STALE_WHILE_REVALIDATE_SEC || 600));
 const ADMIN_SESSION_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.ADMIN_SESSION_TTL_MS || 24 * 60 * 60 * 1000));
 const MIN_ADMIN_PASSWORD_LENGTH = 6;
 const MAX_ADMIN_PASSWORD_LENGTH = 128;
@@ -111,6 +116,20 @@ const CONTENT_TYPES = {
   ".ico": "image/x-icon"
 };
 
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "img-src 'self' data: blob: https:",
+  "script-src 'self' https://mc.yandex.ru https://www.googletagmanager.com https://www.google-analytics.com",
+  "connect-src 'self' https://mc.yandex.ru https://www.google-analytics.com https://region1.google-analytics.com https://stats.g.doubleclick.net",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "frame-src https://mc.yandex.ru",
+  "form-action 'self'"
+].join("; ");
+
 const ALLOWED_STATIC_FILES = new Set([
   "index.html",
   "styles.css",
@@ -173,6 +192,107 @@ function sendText(res, statusCode, text) {
     "Content-Type": "text/plain; charset=utf-8"
   });
   res.end(text);
+}
+
+function buildWeakEtagFromString(value) {
+  const hash = crypto.createHash("sha1").update(String(value || "")).digest("hex").slice(0, 24);
+  return "W/\"" + hash + "\"";
+}
+
+function buildWeakEtagFromStat(stat) {
+  const sizeHex = Math.max(0, Number(stat && stat.size) || 0).toString(16);
+  const mtimeHex = Math.max(0, Math.trunc(Number(stat && stat.mtimeMs) || 0)).toString(16);
+  return "W/\"" + sizeHex + "-" + mtimeHex + "\"";
+}
+
+function isEtagMatch(req, etag) {
+  if (!etag || !req || !req.headers) {
+    return false;
+  }
+
+  const raw = req.headers["if-none-match"];
+  if (!raw) {
+    return false;
+  }
+
+  const header = Array.isArray(raw) ? raw.join(",") : String(raw);
+  if (!header.trim()) {
+    return false;
+  }
+
+  if (header.includes("*")) {
+    return true;
+  }
+
+  return header.split(",").map((part) => part.trim()).includes(etag);
+}
+
+function getStaticCacheControl(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".html") {
+    return "no-cache";
+  }
+
+  if (STATIC_CACHE_MAX_AGE_SEC <= 0) {
+    return "no-cache";
+  }
+
+  if (STATIC_STALE_WHILE_REVALIDATE_SEC > 0) {
+    return "public, max-age=" + STATIC_CACHE_MAX_AGE_SEC + ", stale-while-revalidate=" + STATIC_STALE_WHILE_REVALIDATE_SEC;
+  }
+
+  return "public, max-age=" + STATIC_CACHE_MAX_AGE_SEC;
+}
+
+function sendStoreDataResponse(req, res, statusCode, payload) {
+  const body = JSON.stringify(payload);
+  const etag = buildWeakEtagFromString(body);
+  const baseHeaders = {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "private, max-age=0, must-revalidate",
+    "ETag": etag,
+    "Vary": "Authorization"
+  };
+
+  if (statusCode === 200 && (req.method === "GET" || req.method === "HEAD") && isEtagMatch(req, etag)) {
+    res.writeHead(304, baseHeaders);
+    res.end();
+    return;
+  }
+
+  res.writeHead(statusCode, Object.assign({}, baseHeaders, {
+    "Content-Length": Buffer.byteLength(body)
+  }));
+
+  if (req.method === "HEAD") {
+    res.end();
+    return;
+  }
+
+  res.end(body);
+}
+
+function handleBodyReadFailure(res, error) {
+  if (!error || typeof error.message !== "string") {
+    return false;
+  }
+
+  if (error.message === "BODY_TOO_LARGE") {
+    sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+    return true;
+  }
+
+  if (error.message === "BODY_TIMEOUT") {
+    sendJson(res, 408, { error: "REQUEST_TIMEOUT" });
+    return true;
+  }
+
+  if (error.message === "REQUEST_ABORTED") {
+    sendJson(res, 400, { error: "REQUEST_ABORTED" });
+    return true;
+  }
+
+  return false;
 }
 
 function getClientIp(req) {
@@ -1167,22 +1287,60 @@ function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let finished = false;
 
-    req.on("data", (chunk) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+      req.off("aborted", onAborted);
+    };
+
+    const finish = (error, value) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      cleanup();
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(value);
+    };
+
+    const onData = (chunk) => {
       size += chunk.length;
       if (size > MAX_BODY_SIZE) {
-        reject(new Error("BODY_TOO_LARGE"));
+        finish(new Error("BODY_TOO_LARGE"));
         req.destroy();
         return;
       }
       chunks.push(chunk);
-    });
+    };
 
-    req.on("end", () => {
-      resolve(Buffer.concat(chunks).toString("utf8"));
-    });
+    const onEnd = () => {
+      finish(null, Buffer.concat(chunks).toString("utf8"));
+    };
 
-    req.on("error", reject);
+    const onError = (error) => {
+      finish(error);
+    };
+
+    const onAborted = () => {
+      finish(new Error("REQUEST_ABORTED"));
+    };
+
+    const timer = setTimeout(() => {
+      finish(new Error("BODY_TIMEOUT"));
+      req.destroy();
+    }, REQUEST_BODY_TIMEOUT_MS);
+
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
+    req.on("aborted", onAborted);
   });
 }
 
@@ -1206,9 +1364,9 @@ async function handleStoreApi(req, res) {
     return;
   }
 
-  if (req.method === "GET") {
+  if (req.method === "GET" || req.method === "HEAD") {
     const data = await storeRepository.read();
-    sendJson(res, 200, getStoreDataForRequest(req, data));
+    sendStoreDataResponse(req, res, 200, getStoreDataForRequest(req, data));
     return;
   }
 
@@ -1223,8 +1381,7 @@ async function handleStoreApi(req, res) {
     try {
       raw = await readRequestBody(req);
     } catch (error) {
-      if (error.message === "BODY_TOO_LARGE") {
-        sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+      if (handleBodyReadFailure(res, error)) {
         return;
       }
       throw error;
@@ -1244,7 +1401,7 @@ async function handleStoreApi(req, res) {
         return storeRepository.write(nextPayload);
       });
 
-      sendJson(res, 200, getStoreDataForRequest(req, saved));
+      sendStoreDataResponse(req, res, 200, getStoreDataForRequest(req, saved));
     } catch (error) {
       if (error.message === "INVALID_PAYLOAD") {
         sendJson(res, 400, { error: "INVALID_PAYLOAD" });
@@ -1288,8 +1445,7 @@ async function handleAdminAuthApi(req, res) {
   try {
     raw = await readRequestBody(req);
   } catch (error) {
-    if (error.message === "BODY_TOO_LARGE") {
-      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+    if (handleBodyReadFailure(res, error)) {
       return;
     }
     throw error;
@@ -1378,8 +1534,7 @@ async function handleAdminPasswordApi(req, res) {
   try {
     raw = await readRequestBody(req);
   } catch (error) {
-    if (error.message === "BODY_TOO_LARGE") {
-      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+    if (handleBodyReadFailure(res, error)) {
       return;
     }
     throw error;
@@ -1436,8 +1591,7 @@ async function handleProductReviewsApi(req, res) {
   try {
     raw = await readRequestBody(req);
   } catch (error) {
-    if (error.message === "BODY_TOO_LARGE") {
-      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+    if (handleBodyReadFailure(res, error)) {
       return;
     }
     throw error;
@@ -1560,8 +1714,7 @@ async function handleHomepageReviewsApi(req, res) {
   try {
     raw = await readRequestBody(req);
   } catch (error) {
-    if (error.message === "BODY_TOO_LARGE") {
-      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+    if (handleBodyReadFailure(res, error)) {
       return;
     }
     throw error;
@@ -1650,8 +1803,7 @@ async function handleClientErrorsApi(req, res) {
   try {
     raw = await readRequestBody(req);
   } catch (error) {
-    if (error.message === "BODY_TOO_LARGE") {
-      sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE" });
+    if (handleBodyReadFailure(res, error)) {
       return;
     }
     throw error;
@@ -1706,6 +1858,9 @@ function applySecurityHeaders(res) {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  res.setHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   res.setHeader("X-XSS-Protection", "0");
   if (isProduction()) {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
@@ -1742,24 +1897,55 @@ function getSafeFilePath(urlPathname) {
   return absolutePath;
 }
 
-async function serveStaticFile(res, filePath) {
+async function serveStaticFile(req, res, filePath) {
+  const method = String(req && req.method || "").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    res.setHeader("Allow", "GET, HEAD");
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
   try {
     const stat = await fsp.stat(filePath);
 
     if (stat.isDirectory()) {
-      await serveStaticFile(res, path.join(filePath, "index.html"));
+      await serveStaticFile(req, res, path.join(filePath, "index.html"));
       return;
     }
 
     const extension = path.extname(filePath).toLowerCase();
     const contentType = CONTENT_TYPES[extension] || "application/octet-stream";
-    const body = await fsp.readFile(filePath);
-
-    res.writeHead(200, {
+    const etag = buildWeakEtagFromStat(stat);
+    const cacheControl = getStaticCacheControl(filePath);
+    const headers = {
       "Content-Type": contentType,
-      "Content-Length": body.length
+      "Content-Length": stat.size,
+      "Cache-Control": cacheControl,
+      "ETag": etag
+    };
+
+    if (isEtagMatch(req, etag)) {
+      res.writeHead(304, {
+        "Cache-Control": cacheControl,
+        "ETag": etag
+      });
+      res.end();
+      return;
+    }
+
+    res.writeHead(200, headers);
+
+    if (method === "HEAD") {
+      res.end();
+      return;
+    }
+
+    await new Promise((resolve, reject) => {
+      const stream = fs.createReadStream(filePath);
+      stream.on("error", reject);
+      stream.on("end", resolve);
+      stream.pipe(res);
     });
-    res.end(body);
   } catch (error) {
     if (error.code === "ENOENT") {
       sendText(res, 404, "Not Found");
@@ -1832,10 +2018,18 @@ async function requestHandler(req, res) {
       return;
     }
 
-    await serveStaticFile(res, filePath);
+    await serveStaticFile(req, res, filePath);
   } catch (error) {
     console.error("Server error:", error);
-    sendText(res, 500, "Internal Server Error");
+    if (!res.headersSent) {
+      sendText(res, 500, "Internal Server Error");
+    } else {
+      try {
+        res.end();
+      } catch (endError) {
+        console.error("Failed to finalize errored response:", endError);
+      }
+    }
   }
 }
 
@@ -1843,8 +2037,16 @@ async function start() {
   storeRepository = await createStoreRepository();
 
   httpServer = http.createServer((req, res) => {
+    req.setTimeout(SERVER_REQUEST_TIMEOUT_MS);
     requestHandler(req, res);
   });
+
+  httpServer.requestTimeout = SERVER_REQUEST_TIMEOUT_MS;
+  httpServer.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
+  httpServer.headersTimeout = Math.max(
+    SERVER_REQUEST_TIMEOUT_MS + 1000,
+    SERVER_KEEP_ALIVE_TIMEOUT_MS + 1000
+  );
 
   httpServer.listen(PORT, HOST, () => {
     console.log("Server running at http://localhost:" + PORT);
