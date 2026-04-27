@@ -283,7 +283,25 @@
     if (!source) {
       return 0;
     }
-    var matches = source.match(/в‚|вЂ|[Ѓѓ‚…†‡€‰ЉЊЋЏђ‘’“”•–—™љњћџЎўЈҐЄІіґ№єјЅѕї]/g);
+    var matches = source.match(/\uFFFD|в‚|вЂ|[Ѓѓ‚…†‡€‰ЉЊЋЏђ‘’“”•–—™љњћџЎўЈҐЄІіґ№єјЅѕї]/g);
+    return matches ? matches.length : 0;
+  }
+
+  function countMojibakePairs(value) {
+    var source = String(value || "");
+    if (!source) {
+      return 0;
+    }
+    var matches = source.match(/(?:Р[А-Яа-яЁё]|С[А-Яа-яЁё])/g);
+    return matches ? matches.length : 0;
+  }
+
+  function countCyrillicChars(value) {
+    var source = String(value || "");
+    if (!source) {
+      return 0;
+    }
+    var matches = source.match(/[А-Яа-яЁё]/g);
     return matches ? matches.length : 0;
   }
 
@@ -295,8 +313,10 @@
     if (countMojibakeMarkers(source) >= 2) {
       return true;
     }
-    var pairMatches = source.match(/(?:Р.|С.)/g);
-    return Array.isArray(pairMatches) && pairMatches.length >= 3;
+
+    var pairCount = countMojibakePairs(source);
+    var pairDensity = pairCount / Math.max(1, source.length);
+    return pairCount >= 4 && pairDensity >= 0.12;
   }
 
   function toWindows1251Byte(charCode) {
@@ -353,7 +373,20 @@
       if (!repaired) {
         return source;
       }
-      return countMojibakeMarkers(repaired) < countMojibakeMarkers(source) ? repaired : source;
+      var sourceMarkers = countMojibakeMarkers(source);
+      var repairedMarkers = countMojibakeMarkers(repaired);
+      var sourcePairs = countMojibakePairs(source);
+      var repairedPairs = countMojibakePairs(repaired);
+      var sourceCyrillic = countCyrillicChars(source);
+      var repairedCyrillic = countCyrillicChars(repaired);
+
+      var looksCleaner = repairedMarkers < sourceMarkers || repairedPairs + 1 < sourcePairs;
+      var keepsReadableCyrillic = repairedCyrillic >= Math.max(2, Math.floor(sourceCyrillic * 0.75));
+
+      if (looksCleaner && keepsReadableCyrillic && repaired.indexOf("\uFFFD") === -1) {
+        return repaired;
+      }
+      return source;
     } catch (error) {
       return source;
     }
@@ -531,13 +564,18 @@
       gender = "unisex";
     }
 
+    var description = repairMojibake(String(product.description || "").trim());
+    if (description.indexOf("\uFFFD") >= 0) {
+      description = "";
+    }
+
     return {
       id: String(product.id || uid("p")),
       name: name,
       brand: brand,
       gender: gender,
       bottleType: normalizeBottleType(product.bottleType),
-      description: repairMojibake(String(product.description || "").trim()),
+      description: description,
       image: pickImage(product.image, idx),
       volumes: normalizedVolumes,
       reviews: normalizeReviewList(product.reviews, {
