@@ -856,6 +856,64 @@
     return String(Math.round(numeric * 100) / 100).replace(".", ",");
   }
 
+  function countCorruptedTextMarkers(value) {
+    var source = String(value || "");
+    if (!source) {
+      return 0;
+    }
+
+    var replacementCount = (source.match(/\uFFFD/g) || []).length;
+    var mojibakePairs = (source.match(/(?:Р.|С.)/g) || []).length;
+    return replacementCount + mojibakePairs;
+  }
+
+  function isUnreadableDescription(value) {
+    var source = String(value || "");
+    if (!source) {
+      return false;
+    }
+
+    var markers = countCorruptedTextMarkers(source);
+    if (markers >= 3) {
+      return true;
+    }
+
+    var replacementCount = (source.match(/\uFFFD/g) || []).length;
+    return replacementCount >= 2;
+  }
+
+  function normalizeDescriptionForDisplay(value) {
+    var source = String(value || "").replace(/\s+/g, " ").trim();
+    if (!source) {
+      return "";
+    }
+
+    if (!isUnreadableDescription(source)) {
+      return source;
+    }
+
+    var cleaned = source
+      .replace(/\uFFFD+/g, " ")
+      .replace(/(?:\?{4,}|�{2,})/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (cleaned && !isUnreadableDescription(cleaned) && cleaned.length >= 12) {
+      return cleaned;
+    }
+
+    return "";
+  }
+
+  function getProductDescriptionForCard(product) {
+    var fallback = "Описание аромата уточняется. Напишите в Telegram — подберем подходящий вариант.";
+    var raw = product && Object.prototype.hasOwnProperty.call(product, "description")
+      ? product.description
+      : "";
+    var normalized = normalizeDescriptionForDisplay(raw);
+    return normalized || fallback;
+  }
+
   function renderHomepageReviews() {
     if (!elements.homepageReviewsTrack) {
       return;
@@ -874,7 +932,7 @@
         : escapeHtml(review.author);
       var dateLabel = formatReviewDate(review.createdAt);
       var photoHtml = review.photo
-        ? "<img class=\"review-photo\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву от " + escapeHtml(review.author) + "\">"
+        ? "<img class=\"review-photo\" loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву от " + escapeHtml(review.author) + "\">"
         : "";
       return ""
         + "<article class=\"review-card\">"
@@ -1030,14 +1088,14 @@
     return ""
       + "<article class=\"" + cardClasses + "\" data-product-id=\"" + escapeHtml(product.id) + "\" data-mode=\"" + escapeHtml(config.mode) + "\">"
       + "  <div class=\"product-image-wrap\">"
-      + "    <img src=\"" + escapeHtml(product.image) + "\" alt=\"" + escapeHtml(product.name) + "\">"
+      + "    <img loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(product.image) + "\" alt=\"" + escapeHtml(product.name) + "\">"
       + topLabel
       + "  </div>"
       + "  <div class=\"product-content\">"
       + "    <div>"
       + "      <h3 class=\"product-name\">" + escapeHtml(product.name) + "</h3>"
       + "      <p class=\"product-brand\">" + escapeHtml(product.brand) + " • " + store.getGenderLabel(product.gender) + " • " + store.getBottleTypeLabel(product.bottleType) + "</p>"
-      + "      <p class=\"product-description is-collapsed\" data-product-description>" + escapeHtml(product.description || "Оригинальный аромат из коллекции магазина.") + "</p>"
+      + "      <p class=\"product-description is-collapsed\" data-product-description>" + escapeHtml(getProductDescriptionForCard(product)) + "</p>"
       + "      <button class=\"product-desc-toggle\" type=\"button\" data-product-desc-toggle>Подробнее</button>"
       + "    </div>"
       + "    <div class=\"volume-line\">"
@@ -1078,6 +1136,10 @@
       return;
     }
 
+    if (expanded) {
+      ensureProductReviewSectionContent(section);
+    }
+
     setCollapsibleExpanded(content, Boolean(expanded), animate);
     updateProductReviewToggleButton(section, expanded);
   }
@@ -1102,13 +1164,15 @@
     sections.forEach(function (section) {
       var productId = String(section.getAttribute("data-product-id") || "").trim();
       var expanded = isProductReviewPanelExpanded(productId);
+      if (expanded) {
+        ensureProductReviewSectionContent(section);
+      }
       applyProductReviewSectionState(section, expanded, false);
     });
   }
 
-  function buildProductReviewsBlock(product) {
+  function buildProductReviewsContent(product) {
     var reviews = Array.isArray(product.reviews) ? product.reviews : [];
-    var isExpanded = isProductReviewPanelExpanded(product.id);
     var reviewsHtml = "";
 
     if (!reviews.length) {
@@ -1118,7 +1182,7 @@
         var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
         var dateLabel = formatReviewDate(review.createdAt);
         var photoHtml = review.photo
-          ? "<img class=\"product-review-photo\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву от " + escapeHtml(review.author) + "\">"
+          ? "<img class=\"product-review-photo\" loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву от " + escapeHtml(review.author) + "\">"
           : "";
         return ""
           + "<article class=\"product-review-item\">"
@@ -1134,15 +1198,6 @@
     }
 
     return ""
-      + "<section class=\"product-reviews\" data-product-id=\"" + escapeHtml(product.id) + "\">"
-      + "  <div class=\"product-reviews-head\">"
-      + "    <strong>Отзывы покупателей</strong>"
-      + "    <div class=\"product-reviews-head-right\">"
-      + "      <span>Всего: " + reviews.length + "</span>"
-      + "      <button class=\"btn btn-ghost product-reviews-toggle\" type=\"button\" data-product-reviews-toggle aria-expanded=\"" + (isExpanded ? "true" : "false") + "\">" + (isExpanded ? "Свернуть" : "Развернуть") + "</button>"
-      + "    </div>"
-      + "  </div>"
-      + "  <div class=\"product-reviews-content" + (isExpanded ? "" : " is-collapsed") + "\" data-product-reviews-content aria-hidden=\"" + (isExpanded ? "false" : "true") + "\">"
       + "  <div class=\"product-reviews-list\">"
       + reviewsHtml
       + "  </div>"
@@ -1191,7 +1246,57 @@
       + "      <small class=\"product-review-note\">Ссылки в отзыве запрещены. После отправки отзыв попадёт на модерацию.</small>"
       + "      <button class=\"btn btn-outline product-review-submit\" type=\"submit\">Отправить отзыв</button>"
       + "    </div>"
-      + "  </form>"
+      + "  </form>";
+  }
+
+  function ensureProductReviewSectionContent(section) {
+    if (!section || section.getAttribute("data-product-reviews-lazy") !== "1") {
+      return;
+    }
+
+    var productId = String(section.getAttribute("data-product-id") || "").trim();
+    if (!productId) {
+      return;
+    }
+
+    var product = (Array.isArray(state.products) ? state.products : []).find(function (item) {
+      return String(item && item.id) === productId;
+    });
+    if (!product) {
+      return;
+    }
+
+    var content = section.querySelector("[data-product-reviews-content]");
+    if (!content) {
+      return;
+    }
+
+    content.innerHTML = buildProductReviewsContent(product);
+    section.setAttribute("data-product-reviews-lazy", "0");
+    restoreProductReviewDrafts();
+
+    var form = content.querySelector("[data-product-review-form]");
+    if (form) {
+      ensureReviewCaptcha(form);
+    }
+  }
+
+  function buildProductReviewsBlock(product) {
+    var reviews = Array.isArray(product.reviews) ? product.reviews : [];
+    var isExpanded = isProductReviewPanelExpanded(product.id);
+    var contentHtml = isExpanded ? buildProductReviewsContent(product) : "";
+
+    return ""
+      + "<section class=\"product-reviews\" data-product-id=\"" + escapeHtml(product.id) + "\" data-product-reviews-lazy=\"" + (isExpanded ? "0" : "1") + "\">"
+      + "  <div class=\"product-reviews-head\">"
+      + "    <strong>Отзывы покупателей</strong>"
+      + "    <div class=\"product-reviews-head-right\">"
+      + "      <span>Всего: " + reviews.length + "</span>"
+      + "      <button class=\"btn btn-ghost product-reviews-toggle\" type=\"button\" data-product-reviews-toggle aria-expanded=\"" + (isExpanded ? "true" : "false") + "\">" + (isExpanded ? "Свернуть" : "Развернуть") + "</button>"
+      + "    </div>"
+      + "  </div>"
+      + "  <div class=\"product-reviews-content" + (isExpanded ? "" : " is-collapsed") + "\" data-product-reviews-content aria-hidden=\"" + (isExpanded ? "false" : "true") + "\">"
+      + contentHtml
       + "  </div>"
       + "</section>";
   }
@@ -1573,6 +1678,7 @@
     var ratingInput = form.querySelector("[name=\"rating\"]");
     var photoInput = form.querySelector("[name=\"photo\"]");
     var consentInput = form.querySelector("[name=\"consentAccepted\"]");
+    var termsInput = form.querySelector("[name=\"termsAccepted\"]");
     var termsInput = form.querySelector("[name=\"termsAccepted\"]");
 
     var draft = {
