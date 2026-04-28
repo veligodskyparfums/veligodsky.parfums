@@ -23,6 +23,8 @@
   var CAPACITY_WARNING_STORE_MS = 1300;
   var CAPACITY_CRITICAL_HEALTH_MS = 1800;
   var CAPACITY_CRITICAL_STORE_MS = 2600;
+  var CATALOG_PAGE_SIZE = 18;
+  var SEARCH_INPUT_DEBOUNCE_MS = 160;
 
   var state = {
     editingId: null,
@@ -30,6 +32,10 @@
     heroImageData: "",
     draftMemory: null,
     homepageReviewEditingId: null,
+    catalogSearchQuery: "",
+    catalogVisibleCount: CATALOG_PAGE_SIZE,
+    catalogSearchDebounceTimer: null,
+    expandedProductReviews: {},
     capacityMonitor: {
       timerId: null,
       inFlight: false,
@@ -52,10 +58,20 @@
   async function init() {
     cacheElements();
     bindEvents();
-    if (typeof store.init === "function") {
-      await store.init();
-    }
     checkAuth();
+
+    if (typeof store.init === "function") {
+      try {
+        await store.init();
+        if (isAuthenticated()) {
+          refreshPanel();
+        }
+      } catch (error) {
+        if (isAuthenticated()) {
+          showToast("Не удалось синхронизировать данные с сервером. Работаем с локальным кэшем.", true);
+        }
+      }
+    }
   }
 
   function cacheElements() {
@@ -92,6 +108,10 @@
     elements.cancelEditBtn = document.getElementById("cancelEditBtn");
 
     elements.adminProductsList = document.getElementById("adminProductsList");
+    elements.adminCatalogSearchInput = document.getElementById("adminCatalogSearchInput");
+    elements.adminCatalogSearchClearBtn = document.getElementById("adminCatalogSearchClearBtn");
+    elements.adminCatalogMeta = document.getElementById("adminCatalogMeta");
+    elements.adminCatalogLoadMoreBtn = document.getElementById("adminCatalogLoadMoreBtn");
     elements.homepageReviewForm = document.getElementById("homepageReviewForm");
     elements.homepageReviewsEditorTitle = document.getElementById("homepageReviewsEditorTitle");
     elements.homepageReviewIdInput = document.getElementById("homepageReviewIdInput");
@@ -150,6 +170,15 @@
 
     elements.adminProductsList.addEventListener("click", onProductListClick);
     elements.adminProductsList.addEventListener("change", onProductListChange);
+    if (elements.adminCatalogSearchInput) {
+      elements.adminCatalogSearchInput.addEventListener("input", onCatalogSearchInput);
+    }
+    if (elements.adminCatalogSearchClearBtn) {
+      elements.adminCatalogSearchClearBtn.addEventListener("click", clearCatalogSearch);
+    }
+    if (elements.adminCatalogLoadMoreBtn) {
+      elements.adminCatalogLoadMoreBtn.addEventListener("click", onCatalogLoadMore);
+    }
     elements.volumesContainer.addEventListener("input", saveEditorDraftFromForm);
     elements.volumesContainer.addEventListener("change", saveEditorDraftFromForm);
 
@@ -204,6 +233,7 @@
     elements.panelView.classList.remove("hidden");
     ensureCapacityMonitorElements();
     startCapacityMonitor();
+    refreshPanel();
     refreshPanelFromServer(false);
   }
 
@@ -1143,6 +1173,11 @@
     var action = actionButton.dataset.action;
     var id = actionButton.dataset.id;
 
+    if (action === "toggle-reviews") {
+      toggleProductReviews(id);
+      return;
+    }
+
     if (action === "edit") {
       startEdit(id);
     }
@@ -1208,6 +1243,145 @@
       review: review,
       products: products
     };
+  }
+
+  function normalizeSearchValue(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function onCatalogSearchInput(event) {
+    var nextQuery = normalizeSearchValue(event && event.target && event.target.value);
+    state.catalogSearchQuery = nextQuery;
+    state.catalogVisibleCount = CATALOG_PAGE_SIZE;
+
+    if (state.catalogSearchDebounceTimer) {
+      clearTimeout(state.catalogSearchDebounceTimer);
+    }
+
+    state.catalogSearchDebounceTimer = setTimeout(function () {
+      state.catalogSearchDebounceTimer = null;
+      renderProducts();
+    }, SEARCH_INPUT_DEBOUNCE_MS);
+  }
+
+  function clearCatalogSearch() {
+    state.catalogSearchQuery = "";
+    state.catalogVisibleCount = CATALOG_PAGE_SIZE;
+    if (elements.adminCatalogSearchInput) {
+      elements.adminCatalogSearchInput.value = "";
+      elements.adminCatalogSearchInput.focus();
+    }
+    renderProducts();
+  }
+
+  function onCatalogLoadMore() {
+    state.catalogVisibleCount += CATALOG_PAGE_SIZE;
+    renderProducts();
+  }
+
+  function productMatchesSearch(product, query) {
+    if (!query) {
+      return true;
+    }
+
+    var safeProduct = product || {};
+    var volumes = Array.isArray(safeProduct.volumes) ? safeProduct.volumes : [];
+    var volumeIndex = volumes.map(function (item) {
+      return formatMlValue(item.ml) + "ml " + String(item.price || "");
+    }).join(" ");
+
+    var searchIndex = normalizeSearchValue([
+      safeProduct.name,
+      safeProduct.brand,
+      safeProduct.description,
+      store.getGenderLabel(safeProduct.gender),
+      store.getBottleTypeLabel(safeProduct.bottleType),
+      volumeIndex
+    ].join(" "));
+
+    return searchIndex.indexOf(query) >= 0;
+  }
+
+  function getFilteredProducts(products) {
+    var safeProducts = Array.isArray(products) ? products : [];
+    var query = state.catalogSearchQuery;
+    if (!query) {
+      return safeProducts.slice();
+    }
+    return safeProducts.filter(function (product) {
+      return productMatchesSearch(product, query);
+    });
+  }
+
+  function updateCatalogMeta(totalCount, filteredCount, visibleCount) {
+    if (!elements.adminCatalogMeta) {
+      return;
+    }
+
+    var shown = Math.min(filteredCount, visibleCount);
+    if (!state.catalogSearchQuery) {
+      elements.adminCatalogMeta.textContent = "Показано " + shown + " из " + totalCount + " товаров";
+      return;
+    }
+
+    elements.adminCatalogMeta.textContent = "Найдено " + filteredCount + " из " + totalCount + " товаров. Показано " + shown + ".";
+  }
+
+  function updateCatalogLoadMoreButton(filteredCount, visibleCount) {
+    if (!elements.adminCatalogLoadMoreBtn) {
+      return;
+    }
+
+    if (visibleCount < filteredCount) {
+      elements.adminCatalogLoadMoreBtn.classList.remove("hidden");
+      elements.adminCatalogLoadMoreBtn.textContent = "Показать ещё (" + (filteredCount - visibleCount) + ")";
+      return;
+    }
+
+    elements.adminCatalogLoadMoreBtn.classList.add("hidden");
+  }
+
+  function toggleProductReviews(productId) {
+    var safeProductId = String(productId || "").trim();
+    if (!safeProductId) {
+      return;
+    }
+
+    var card = elements.adminProductsList.querySelector("[data-product-id=\"" + cssEscapeValue(safeProductId) + "\"]");
+    if (!card) {
+      return;
+    }
+
+    var panel = card.querySelector("[data-product-reviews-panel]");
+    var button = card.querySelector("[data-action=\"toggle-reviews\"]");
+    if (!panel || !button) {
+      return;
+    }
+
+    var isOpen = !panel.hasAttribute("hidden");
+    if (isOpen) {
+      panel.setAttribute("hidden", "hidden");
+      panel.innerHTML = "";
+      button.textContent = "Показать отзывы";
+      state.expandedProductReviews[safeProductId] = false;
+      return;
+    }
+
+    var product = store.getProducts().find(function (item) {
+      return String(item.id) === safeProductId;
+    });
+    if (!product) {
+      return;
+    }
+
+    panel.innerHTML = buildProductReviewsPanel(product);
+    panel.removeAttribute("hidden");
+    button.textContent = "Скрыть отзывы";
+    state.expandedProductReviews[safeProductId] = true;
   }
 
   function findPendingProductReviewEntry(productId, reviewId) {
@@ -1429,117 +1603,161 @@
   }
 
   function renderProducts() {
-    var products = store.getProducts();
+    if (elements.adminCatalogSearchInput) {
+      var normalizedFromInput = normalizeSearchValue(elements.adminCatalogSearchInput.value);
+      if (normalizedFromInput !== state.catalogSearchQuery) {
+        state.catalogSearchQuery = normalizedFromInput;
+      }
+      if (elements.adminCatalogSearchClearBtn) {
+        elements.adminCatalogSearchClearBtn.disabled = !state.catalogSearchQuery;
+      }
+    }
 
-    if (!products.length) {
-      elements.adminProductsList.innerHTML = "<div class=\"empty-state\">\u041a\u0430\u0442\u0430\u043b\u043e\u0433 \u043f\u0443\u0441\u0442. \u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u043f\u0435\u0440\u0432\u044b\u0439 \u0430\u0440\u043e\u043c\u0430\u0442.\u003c/div>";
+    var allProducts = store.getProducts();
+    var filteredProducts = getFilteredProducts(allProducts);
+    var visibleCount = Math.min(filteredProducts.length, Math.max(CATALOG_PAGE_SIZE, state.catalogVisibleCount));
+    var visibleProducts = filteredProducts.slice(0, visibleCount);
+
+    updateCatalogMeta(allProducts.length, filteredProducts.length, visibleCount);
+    updateCatalogLoadMoreButton(filteredProducts.length, visibleCount);
+
+    if (!allProducts.length) {
+      elements.adminProductsList.innerHTML = "<div class=\"empty-state\">Каталог пуст. Добавьте первый аромат.</div>";
       return;
     }
 
-    elements.adminProductsList.innerHTML = products.map(function (product) {
-      var volumesLine = product.volumes.map(function (volume) {
-        return formatMlValue(volume.ml) + "ml - " + store.formatPrice(volume.price);
-      }).join(" | " );
+    if (!filteredProducts.length) {
+      elements.adminProductsList.innerHTML = "<div class=\"empty-state\">По запросу ничего не найдено.</div>";
+      return;
+    }
 
-      var productReviews = Array.isArray(product.reviews) ? product.reviews : [];
-      var pendingProductReviews = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
-      var productReviewsHtml = "";
-      var pendingProductReviewsHtml = "";
-
-      if (!productReviews.length) {
-        productReviewsHtml = "<div class=\"admin-product-review-empty\">\u041f\u043e\u043a\u0430 \u043d\u0435\u0442 \u043e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u043d\u043d\u044b\u0445 \u043e\u0442\u0437\u044b\u0432\u043e\u0432.\u003c/div>";
-      } else {
-        productReviewsHtml = "<div class=\"admin-product-reviews-list\">"
-          + productReviews.map(function (review) {
-            var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
-            var photoHtml = review.photo
-              ? "<img class=\"admin-review-photo\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву\">"
-              : "";
-            return ""
-              + "<article class=\"admin-review-card\">"
-              + "  <div class=\"admin-review-head\">"
-              + "    <div>"
-              + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
-              + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
-              +        renderReviewConsentMeta(review)
-              + "    </div>"
-              + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
-              + "  </div>"
-              + photoHtml
-              + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
-              + "  <div class=\"admin-review-actions\">"
-              + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-review-action=\"edit\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c</button>"
-              + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-review-action=\"delete\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u0423\u0434\u0430\u043b\u0438\u0442\u044c</button>"
-              + "  </div>"
-              + "</article>";
-          }).join("")
-          + "</div>";
-      }
-
-      if (!pendingProductReviews.length) {
-        pendingProductReviewsHtml = "<div class=\"admin-product-review-empty\">\u041d\u0430 \u043c\u043e\u0434\u0435\u0440\u0430\u0446\u0438\u0438 \u043f\u043e\u043a\u0430 \u043d\u0435\u0442 \u043e\u0442\u0437\u044b\u0432\u043e\u0432.\u003c/div>";
-      } else {
-        pendingProductReviewsHtml = "<div class=\"admin-product-reviews-list\">"
-          + pendingProductReviews.map(function (review) {
-            var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
-            var photoHtml = review.photo
-              ? "<img class=\"admin-review-photo\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву\">"
-              : "";
-            return ""
-              + "<article class=\"admin-review-card admin-review-card-pending\">"
-              + "  <div class=\"admin-review-head\">"
-              + "    <div>"
-              + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
-              + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
-              +        renderReviewConsentMeta(review)
-              + "    </div>"
-              + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
-              + "  </div>"
-              + photoHtml
-              + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
-              + "  <div class=\"admin-review-actions\">"
-              + "    <button class=\"btn btn-primary\" type=\"button\" data-product-pending-review-action=\"approve\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u0442\u044c</button>"
-              + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-pending-review-action=\"reject\" data-product-id=\"" + escapeHtml(product.id) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">\u041e\u0442\u043a\u043b\u043e\u043d\u0438\u0442\u044c</button>"
-              + "  </div>"
-              + "</article>";
-          }).join("")
-          + "</div>";
-      }
-
-      return ""
-        + "<article class=\"admin-product-card\">"
-        + "  <img src=\"" + escapeHtml(product.image) + "\" alt=\"" + escapeHtml(product.name) + "\">"
-        + "  <div class=\"admin-product-body\">"
-        + "    <div class=\"admin-product-head\">"
-        + "      <div class=\"admin-product-title\">"
-        + "        <strong>" + escapeHtml(product.name) + "</strong>"
-        + "        <span>" + escapeHtml(product.brand) + " | " + store.getGenderLabel(product.gender) + " | " + store.getBottleTypeLabel(product.bottleType) + "</span>"
-        + "      </div>"
-        + "      <div class=\"admin-product-actions\">"
-        + "        <button class=\"btn btn-ghost\" type=\"button\" data-action=\"edit\" data-id=\"" + escapeHtml(product.id) + "\">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c</button>"
-        + "        <button class=\"btn btn-ghost\" type=\"button\" data-action=\"delete\" data-id=\"" + escapeHtml(product.id) + "\">\u0423\u0434\u0430\u043b\u0438\u0442\u044c</button>"
-        + "      </div>"
-        + "    </div>"
-        + "    <p class=\"meta-line\">" + escapeHtml(volumesLine) + "</p>"
-        + "    <div class=\"admin-product-actions\">"
-        + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"week\" data-id=\"" + escapeHtml(product.id) + "\" " + (product.topWeek ? "checked" : "") + ">\u0422\u043e\u043f \u043d\u0435\u0434\u0435\u043b\u0438</label>"
-        + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"month\" data-id=\"" + escapeHtml(product.id) + "\" " + (product.topMonth ? "checked" : "") + ">\u0422\u043e\u043f \u043c\u0435\u0441\u044f\u0446\u0430</label>"
-        + "    </div>"
-        + "    <div class=\"admin-product-reviews\">"
-        + "      <div class=\"admin-product-reviews-head\">"
-        + "        <strong>\u041e\u0442\u0437\u044b\u0432\u044b \u043a \u0430\u0440\u043e\u043c\u0430\u0442\u0443</strong>"
-        + "        <span>\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u043d\u043e: " + productReviews.length + "</span>"
-        + "      </div>"
-        + productReviewsHtml
-        + "      <div class=\"admin-product-reviews-head\">"
-        + "        <strong>\u041d\u0430 \u043c\u043e\u0434\u0435\u0440\u0430\u0446\u0438\u0438</strong>"
-        + "        <span>\u0412\u0441\u0435\u0433\u043e: " + pendingProductReviews.length + "</span>"
-        + "      </div>"
-        + pendingProductReviewsHtml
-        + "    </div>"
-        + "  </div>"
-        + "</article>";
+    elements.adminProductsList.innerHTML = visibleProducts.map(function (product) {
+      return buildProductCardMarkup(product);
     }).join("");
+
+    visibleProducts.forEach(function (product) {
+      if (!state.expandedProductReviews[String(product.id)]) {
+        return;
+      }
+      toggleProductReviews(product.id);
+    });
+  }
+
+  function buildProductCardMarkup(product) {
+    var volumesLine = (Array.isArray(product.volumes) ? product.volumes : []).map(function (volume) {
+      return formatMlValue(volume.ml) + "ml - " + store.formatPrice(volume.price);
+    }).join(" | ");
+
+    var productReviews = Array.isArray(product.reviews) ? product.reviews : [];
+    var pendingProductReviews = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
+    var productId = String(product.id || "");
+
+    return ""
+      + "<article class=\"admin-product-card\" data-product-id=\"" + escapeHtml(productId) + "\">"
+      + "  <img loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(product.image) + "\" alt=\"" + escapeHtml(product.name) + "\">"
+      + "  <div class=\"admin-product-body\">"
+      + "    <div class=\"admin-product-head\">"
+      + "      <div class=\"admin-product-title\">"
+      + "        <strong>" + escapeHtml(product.name) + "</strong>"
+      + "        <span>" + escapeHtml(product.brand) + " | " + store.getGenderLabel(product.gender) + " | " + store.getBottleTypeLabel(product.bottleType) + "</span>"
+      + "      </div>"
+      + "      <div class=\"admin-product-actions\">"
+      + "        <button class=\"btn btn-ghost\" type=\"button\" data-action=\"edit\" data-id=\"" + escapeHtml(productId) + "\">Редактировать</button>"
+      + "        <button class=\"btn btn-ghost\" type=\"button\" data-action=\"delete\" data-id=\"" + escapeHtml(productId) + "\">Удалить</button>"
+      + "      </div>"
+      + "    </div>"
+      + "    <p class=\"meta-line\">" + escapeHtml(volumesLine) + "</p>"
+      + "    <div class=\"admin-product-actions\">"
+      + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"week\" data-id=\"" + escapeHtml(productId) + "\" " + (product.topWeek ? "checked" : "") + ">Топ недели</label>"
+      + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"month\" data-id=\"" + escapeHtml(productId) + "\" " + (product.topMonth ? "checked" : "") + ">Топ месяца</label>"
+      + "    </div>"
+      + "    <div class=\"admin-product-review-summary\">"
+      + "      <span>Отзывы: " + productReviews.length + " • На модерации: " + pendingProductReviews.length + "</span>"
+      + "      <button class=\"btn btn-ghost\" type=\"button\" data-action=\"toggle-reviews\" data-id=\"" + escapeHtml(productId) + "\">Показать отзывы</button>"
+      + "    </div>"
+      + "    <div class=\"admin-product-reviews\" data-product-reviews-panel hidden></div>"
+      + "  </div>"
+      + "</article>";
+  }
+
+  function buildProductReviewsPanel(product) {
+    var productReviews = Array.isArray(product.reviews) ? product.reviews : [];
+    var pendingProductReviews = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
+    var productId = String(product.id || "");
+    var productReviewsHtml = "";
+    var pendingProductReviewsHtml = "";
+
+    if (!productReviews.length) {
+      productReviewsHtml = "<div class=\"admin-product-review-empty\">Пока нет опубликованных отзывов.</div>";
+    } else {
+      productReviewsHtml = "<div class=\"admin-product-reviews-list\">"
+        + productReviews.map(function (review) {
+          var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
+          var photoHtml = review.photo
+            ? "<img class=\"admin-review-photo\" loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву\">"
+            : "";
+          return ""
+            + "<article class=\"admin-review-card\">"
+            + "  <div class=\"admin-review-head\">"
+            + "    <div>"
+            + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
+            + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
+            +        renderReviewConsentMeta(review)
+            + "    </div>"
+            + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
+            + "  </div>"
+            + photoHtml
+            + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
+            + "  <div class=\"admin-review-actions\">"
+            + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-review-action=\"edit\" data-product-id=\"" + escapeHtml(productId) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">Редактировать</button>"
+            + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-review-action=\"delete\" data-product-id=\"" + escapeHtml(productId) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">Удалить</button>"
+            + "  </div>"
+            + "</article>";
+        }).join("")
+        + "</div>";
+    }
+
+    if (!pendingProductReviews.length) {
+      pendingProductReviewsHtml = "<div class=\"admin-product-review-empty\">На модерации пока нет отзывов.</div>";
+    } else {
+      pendingProductReviewsHtml = "<div class=\"admin-product-reviews-list\">"
+        + pendingProductReviews.map(function (review) {
+          var cityPart = review.city ? (", " + escapeHtml(review.city)) : "";
+          var photoHtml = review.photo
+            ? "<img class=\"admin-review-photo\" loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(review.photo) + "\" alt=\"Фото к отзыву\">"
+            : "";
+          return ""
+            + "<article class=\"admin-review-card admin-review-card-pending\">"
+            + "  <div class=\"admin-review-head\">"
+            + "    <div>"
+            + "      <strong>" + escapeHtml(review.author) + cityPart + "</strong>"
+            + "      <div class=\"admin-review-meta\">" + escapeHtml(formatReviewDate(review.createdAt)) + "</div>"
+            +        renderReviewConsentMeta(review)
+            + "    </div>"
+            + "    <span class=\"admin-review-rating\">" + buildStars(review.rating) + "</span>"
+            + "  </div>"
+            + photoHtml
+            + "  <p class=\"admin-review-text\">" + escapeHtml(review.text) + "</p>"
+            + "  <div class=\"admin-review-actions\">"
+            + "    <button class=\"btn btn-primary\" type=\"button\" data-product-pending-review-action=\"approve\" data-product-id=\"" + escapeHtml(productId) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">Опубликовать</button>"
+            + "    <button class=\"btn btn-ghost\" type=\"button\" data-product-pending-review-action=\"reject\" data-product-id=\"" + escapeHtml(productId) + "\" data-review-id=\"" + escapeHtml(review.id) + "\">Отклонить</button>"
+            + "  </div>"
+            + "</article>";
+        }).join("")
+        + "</div>";
+    }
+
+    return ""
+      + "<div class=\"admin-product-reviews-head\">"
+      + "  <strong>Отзывы к аромату</strong>"
+      + "  <span>Опубликовано: " + productReviews.length + "</span>"
+      + "</div>"
+      + productReviewsHtml
+      + "<div class=\"admin-product-reviews-head\">"
+      + "  <strong>На модерации</strong>"
+      + "  <span>Всего: " + pendingProductReviews.length + "</span>"
+      + "</div>"
+      + pendingProductReviewsHtml;
   }
 
   function buildStars(value) {
@@ -2158,6 +2376,14 @@
     toastTimer = setTimeout(function () {
       elements.toast.classList.remove("show", "error");
     }, 2200);
+  }
+
+  function cssEscapeValue(value) {
+    var safe = String(value || "");
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return window.CSS.escape(safe);
+    }
+    return safe.replace(/["\\]/g, "\\$&");
   }
 
   function escapeHtml(value) {

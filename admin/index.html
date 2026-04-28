@@ -154,7 +154,18 @@
 
       <section class="admin-section">
         <h2>Каталог</h2>
+        <div class="admin-catalog-tools">
+          <label class="field admin-catalog-search">
+            <span>Поиск по каталогу</span>
+            <input type="search" id="adminCatalogSearchInput" placeholder="Название, бренд, тип флакона..." autocomplete="off">
+          </label>
+          <button class="btn btn-ghost admin-catalog-clear" type="button" id="adminCatalogSearchClearBtn">Сбросить</button>
+        </div>
+        <div class="admin-catalog-meta" id="adminCatalogMeta">Загрузка каталога...</div>
         <div id="adminProductsList" class="admin-products"></div>
+        <div class="admin-catalog-load-more-wrap">
+          <button class="btn btn-ghost hidden" type="button" id="adminCatalogLoadMoreBtn">Показать ещё</button>
+        </div>
       </section>
 
       <section class="admin-section">
