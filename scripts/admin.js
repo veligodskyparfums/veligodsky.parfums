@@ -23,7 +23,7 @@
   var CAPACITY_WARNING_STORE_MS = 1300;
   var CAPACITY_CRITICAL_HEALTH_MS = 1800;
   var CAPACITY_CRITICAL_STORE_MS = 2600;
-  var CATALOG_PAGE_SIZE = 18;
+  var CATALOG_PAGE_SIZE = 200;
   var SEARCH_INPUT_DEBOUNCE_MS = 160;
 
   var state = {
@@ -405,7 +405,7 @@
         showToast("Пароль сохранен, но настройки не удалось сохранить.", true);
         return;
       }
-      showToast("Не удалось сохранить настройки на сервер.", true);
+      showToast(getSyncErrorToastMessage(error), true);
     }
   }
 
@@ -999,16 +999,10 @@
       : [payload].concat(products);
     var isEditing = Boolean(existing);
 
-    var savePromise = store.saveProducts(nextProducts);
-
-    renderProducts();
-    resetEditor();
-    showToast(isEditing
-      ? "Изменения применены. Синхронизируем с сервером..."
-      : "Товар добавлен. Синхронизируем с сервером...");
-
     try {
-      await savePromise;
+      await store.saveProducts(nextProducts);
+      renderProducts();
+      resetEditor();
       showToast(isEditing ? "Товар обновлён" : "Товар добавлен");
     } catch (error) {
       var message = String(error && error.message || "");
@@ -1018,10 +1012,10 @@
         return;
       }
       if (message.indexOf("413") >= 0) {
-        showToast("Сохранено локально, но фото слишком тяжелое для сервера. Уменьшите размер и сохраните снова.", true);
-        return;
+        showToast("Фото слишком тяжелое для сервера. Уменьшите размер и сохраните снова.", true);
+      } else {
+        showToast(getSyncErrorToastMessage(error), true);
       }
-      showToast("Сохранено локально. Когда интернет стабилизируется, данные синхронизируются с сервером.", true);
     }
   }
 
@@ -1251,6 +1245,26 @@
       .replace(/ё/g, "е")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  function getSyncErrorToastMessage(error) {
+    var message = String(error && error.message || "");
+    if (!message) {
+      return "Не удалось сохранить изменения на сервер.";
+    }
+    if (message.indexOf("STORE_VERSION_MISMATCH") >= 0) {
+      return "Данные изменились в другой сессии. Обновите страницу админки и повторите.";
+    }
+    if (message.indexOf("CATALOG_SHRINK_BLOCKED") >= 0) {
+      return "Сервер заблокировал подозрительное массовое удаление товаров. Обновите данные и повторите.";
+    }
+    if (message.indexOf("NETWORK_TIMEOUT") >= 0) {
+      return "Таймаут сети. Проверьте интернет и повторите.";
+    }
+    if (message.indexOf("Failed to fetch") >= 0 || message.indexOf("NetworkError") >= 0) {
+      return "Проблема сети. Изменения не записаны на сервер.";
+    }
+    return "Не удалось сохранить изменения на сервер.";
   }
 
   function onCatalogSearchInput(event) {

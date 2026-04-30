@@ -970,6 +970,9 @@
     if (adminToken) {
       headers.Authorization = "Bearer " + adminToken;
     }
+    if (remoteDataEtag) {
+      headers["If-Match"] = remoteDataEtag;
+    }
 
     var response = await fetchWithTimeout(API_DATA_URL, {
       method: "PUT",
@@ -982,6 +985,17 @@
     }
 
     if (!response.ok) {
+      var errorCode = "";
+      try {
+        var payload = await response.json();
+        errorCode = String(payload && payload.error || "").trim();
+      } catch (error) {
+        errorCode = "";
+      }
+
+      if (errorCode) {
+        throw new Error(errorCode);
+      }
       throw new Error("HTTP " + response.status);
     }
 
@@ -1017,17 +1031,8 @@
     if (!canUseRemoteStore()) {
       return loadData();
     }
-
     if (hasPendingUnsyncedChanges()) {
-      try {
-        await tryFlushPendingUnsyncedData();
-      } catch (error) {
-        return loadData();
-      }
-
-      if (hasPendingUnsyncedChanges()) {
-        return loadData();
-      }
+      return loadData();
     }
 
     try {
@@ -1050,18 +1055,7 @@
     syncPromise = Promise.resolve()
       .then(async function () {
         if (hasPendingUnsyncedChanges()) {
-          try {
-            await tryFlushPendingUnsyncedData();
-          } catch (error) {
-            if (shouldThrowCommitError(error)) {
-              throw error;
-            }
-            return loadData();
-          }
-
-          if (hasPendingUnsyncedChanges()) {
-            return loadData();
-          }
+          return loadData();
         }
 
         var remote = await fetchRemoteData();
@@ -1086,6 +1080,9 @@
       clearPendingUnsyncedChanges();
       return saveData(remote);
     } catch (error) {
+      if (getStoredAdminToken()) {
+        throw error;
+      }
       if (shouldThrowCommitError(error)) {
         throw error;
       }

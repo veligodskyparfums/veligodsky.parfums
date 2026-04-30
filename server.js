@@ -12,6 +12,7 @@ const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const DATA_FILE = path.join(DATA_DIR, "store-data.json");
 const DB_TABLE = "store_state";
+const DB_HISTORY_TABLE = "store_state_history";
 const MAX_BODY_SIZE = 30 * 1024 * 1024;
 const REQUEST_BODY_TIMEOUT_MS = Math.max(5000, Number(process.env.REQUEST_BODY_TIMEOUT_MS || 20 * 1000));
 const SERVER_REQUEST_TIMEOUT_MS = Math.max(10 * 1000, Number(process.env.SERVER_REQUEST_TIMEOUT_MS || 30 * 1000));
@@ -44,6 +45,9 @@ const ADMIN_PASSWORD_HASH_ITERATIONS = 180000;
 const ADMIN_PASSWORD_HASH_BYTES = 32;
 const ADMIN_PASSWORD_SALT_BYTES = 16;
 const ADMIN_PASSWORD_HASH_DIGEST = "sha256";
+const STORE_SHRINK_GUARD_MIN_DROP_COUNT = Math.max(1, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_COUNT || 25));
+const STORE_SHRINK_GUARD_MIN_DROP_RATIO = Math.min(0.95, Math.max(0.1, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_RATIO || 0.35)));
+const STORE_HISTORY_MAX_ROWS = Math.max(20, Number(process.env.STORE_HISTORY_MAX_ROWS || 300));
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -920,6 +924,72 @@ function ensureIncomingAdminPassword(payload, currentData) {
   return next;
 }
 
+function getProductsCount(data) {
+  if (!data || typeof data !== "object" || !Array.isArray(data.products)) {
+    return 0;
+  }
+  return data.products.length;
+}
+
+function isIfMatchSatisfied(req, currentEtag) {
+  const raw = req && req.headers ? req.headers["if-match"] : "";
+  const header = Array.isArray(raw) ? raw.join(",") : String(raw || "");
+  if (!header.trim()) {
+    return true;
+  }
+  if (!currentEtag) {
+    return false;
+  }
+
+  const values = header.split(",").map((part) => part.trim()).filter(Boolean);
+  if (!values.length) {
+    return true;
+  }
+  if (values.includes("*")) {
+    return true;
+  }
+  return values.includes(currentEtag);
+}
+
+function hasForceReplaceFlag(req, parsedPayload) {
+  const headerValue = req && req.headers ? req.headers["x-store-force-replace"] : "";
+  const queryFlag = req && req.url ? new URL(req.url, "http://localhost").searchParams.get("forceReplace") : "";
+  if (isTrueLike(headerValue) || isTrueLike(queryFlag)) {
+    return true;
+  }
+
+  if (parsedPayload && typeof parsedPayload === "object") {
+    if (isTrueLike(parsedPayload.forceReplaceProducts)) {
+      return true;
+    }
+
+    if (parsedPayload.meta && typeof parsedPayload.meta === "object" && isTrueLike(parsedPayload.meta.forceReplaceProducts)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function getCatalogShrinkGuard(currentData, nextData) {
+  const currentCount = getProductsCount(currentData);
+  const nextCount = getProductsCount(nextData);
+  const dropCount = Math.max(0, currentCount - nextCount);
+  const dropRatio = currentCount > 0 ? dropCount / currentCount : 0;
+  const blocked = currentCount > 0
+    && nextCount < currentCount
+    && dropCount >= STORE_SHRINK_GUARD_MIN_DROP_COUNT
+    && dropRatio >= STORE_SHRINK_GUARD_MIN_DROP_RATIO;
+
+  return {
+    blocked,
+    currentCount,
+    nextCount,
+    dropCount,
+    dropRatio
+  };
+}
+
 function safeCompareStrings(left, right) {
   const leftValue = Buffer.from(String(left || ""), "utf8");
   const rightValue = Buffer.from(String(right || ""), "utf8");
@@ -1078,10 +1148,12 @@ async function writeDataFile(filePath, payload) {
 class FileStoreRepository {
   constructor(filePath) {
     this.filePath = filePath;
+    this.historyDir = path.join(path.dirname(filePath), "history");
   }
 
   async init() {
     await fsp.mkdir(path.dirname(this.filePath), { recursive: true });
+    await fsp.mkdir(this.historyDir, { recursive: true });
 
     try {
       const raw = await fsp.readFile(this.filePath, "utf8");
@@ -1096,8 +1168,33 @@ class FileStoreRepository {
     return validateStoreData(JSON.parse(raw));
   }
 
-  async write(payload) {
+  async write(payload, options) {
+    const previousPayload = options && options.previousPayload ? validateStoreData(options.previousPayload) : null;
+    if (previousPayload) {
+      await this.appendHistorySnapshot(previousPayload);
+    }
     return writeDataFile(this.filePath, payload);
+  }
+
+  async appendHistorySnapshot(payload) {
+    const safePayload = validateStoreData(payload);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const random = crypto.randomBytes(4).toString("hex");
+    const filePath = path.join(this.historyDir, "store_state_" + stamp + "_" + random + ".json");
+    await fsp.writeFile(filePath, JSON.stringify(safePayload, null, 2), "utf8");
+
+    try {
+      const files = (await fsp.readdir(this.historyDir))
+        .filter((name) => name.startsWith("store_state_") && name.endsWith(".json"))
+        .sort()
+        .reverse();
+      const toDelete = files.slice(STORE_HISTORY_MAX_ROWS);
+      for (const name of toDelete) {
+        await fsp.unlink(path.join(this.historyDir, name)).catch(() => undefined);
+      }
+    } catch (error) {
+      // Non-fatal cleanup.
+    }
   }
 
   async close() {
@@ -1118,6 +1215,20 @@ class PostgresStoreRepository {
       + "payload JSONB NOT NULL, "
       + "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
       + ")"
+    );
+
+    await this.pool.query(
+      "CREATE TABLE IF NOT EXISTS " + DB_HISTORY_TABLE + " ("
+      + "snapshot_id BIGSERIAL PRIMARY KEY, "
+      + "payload JSONB NOT NULL, "
+      + "products_count INTEGER NOT NULL DEFAULT 0, "
+      + "source TEXT NOT NULL DEFAULT 'api_put', "
+      + "changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+      + ")"
+    );
+    await this.pool.query(
+      "CREATE INDEX IF NOT EXISTS " + DB_HISTORY_TABLE + "_changed_at_idx "
+      + "ON " + DB_HISTORY_TABLE + " (changed_at DESC)"
     );
 
     const existing = await this.pool.query(
@@ -1141,8 +1252,15 @@ class PostgresStoreRepository {
     return normalizeDbPayload(result.rows[0].payload);
   }
 
-  async write(payload) {
+  async write(payload, options) {
     const validated = validateStoreData(payload);
+    const previousPayload = options && options.previousPayload ? validateStoreData(options.previousPayload) : null;
+    const source = safeString(options && options.source).slice(0, 64) || "api_put";
+
+    if (previousPayload) {
+      await this.appendHistorySnapshot(previousPayload, source);
+    }
+
     const result = await this.pool.query(
       "INSERT INTO " + DB_TABLE + " (id, payload, updated_at) "
       + "VALUES (1, $1::jsonb, NOW()) "
@@ -1152,6 +1270,27 @@ class PostgresStoreRepository {
     );
 
     return normalizeDbPayload(result.rows[0].payload);
+  }
+
+  async appendHistorySnapshot(payload, source) {
+    const validated = validateStoreData(payload);
+    const safeSource = safeString(source).slice(0, 64) || "api_put";
+    const productsCount = getProductsCount(validated);
+
+    await this.pool.query(
+      "INSERT INTO " + DB_HISTORY_TABLE + " (payload, products_count, source, changed_at) "
+      + "VALUES ($1::jsonb, $2, $3, NOW())",
+      [JSON.stringify(validated), productsCount, safeSource]
+    );
+
+    await this.pool.query(
+      "DELETE FROM " + DB_HISTORY_TABLE + " WHERE snapshot_id IN ("
+      + "SELECT snapshot_id FROM " + DB_HISTORY_TABLE + " "
+      + "ORDER BY changed_at DESC, snapshot_id DESC "
+      + "OFFSET $1"
+      + ")",
+      [STORE_HISTORY_MAX_ROWS]
+    );
   }
 
   async close() {
@@ -1377,6 +1516,7 @@ async function handleStoreApi(req, res) {
 
     let raw;
     let parsed;
+    const forceReplaceProducts = hasForceReplaceFlag(req, null);
 
     try {
       raw = await readRequestBody(req);
@@ -1394,17 +1534,60 @@ async function handleStoreApi(req, res) {
       return;
     }
 
+    const forceReplaceFromPayload = forceReplaceProducts || hasForceReplaceFlag(req, parsed);
+
     try {
       const saved = await runSerializedStoreMutation(async () => {
         const currentData = await storeRepository.read();
+        const currentPayloadForClient = getStoreDataForRequest(req, currentData);
+        const currentEtag = buildWeakEtagFromString(JSON.stringify(currentPayloadForClient));
+
+        if (!isIfMatchSatisfied(req, currentEtag)) {
+          const mismatchError = new Error("STORE_VERSION_MISMATCH");
+          mismatchError.code = "STORE_VERSION_MISMATCH";
+          mismatchError.currentEtag = currentEtag;
+          throw mismatchError;
+        }
+
         const nextPayload = ensureIncomingAdminPassword(parsed, currentData);
-        return storeRepository.write(nextPayload);
+        const shrinkGuard = getCatalogShrinkGuard(currentData, nextPayload);
+        if (shrinkGuard.blocked && !forceReplaceFromPayload) {
+          const guardError = new Error("CATALOG_SHRINK_BLOCKED");
+          guardError.code = "CATALOG_SHRINK_BLOCKED";
+          guardError.details = shrinkGuard;
+          throw guardError;
+        }
+
+        return storeRepository.write(nextPayload, {
+          previousPayload: currentData,
+          source: "api_put"
+        });
       });
 
       sendStoreDataResponse(req, res, 200, getStoreDataForRequest(req, saved));
     } catch (error) {
       if (error.message === "INVALID_PAYLOAD") {
         sendJson(res, 400, { error: "INVALID_PAYLOAD" });
+        return;
+      }
+      if (error.code === "STORE_VERSION_MISMATCH") {
+        sendJson(res, 412, {
+          error: "STORE_VERSION_MISMATCH",
+          message: "Store data was changed in another session. Refresh admin and retry.",
+          currentEtag: error.currentEtag || ""
+        });
+        return;
+      }
+      if (error.code === "CATALOG_SHRINK_BLOCKED") {
+        const details = error.details || {};
+        sendJson(res, 409, {
+          error: "CATALOG_SHRINK_BLOCKED",
+          message: "Blocked suspicious bulk product deletion. Refresh data and retry.",
+          currentCount: details.currentCount || 0,
+          nextCount: details.nextCount || 0,
+          dropCount: details.dropCount || 0,
+          dropRatio: Number.isFinite(details.dropRatio) ? details.dropRatio : 0
+        });
         return;
       }
       throw error;
