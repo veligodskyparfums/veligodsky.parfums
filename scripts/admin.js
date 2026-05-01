@@ -1252,6 +1252,9 @@
     if (!message) {
       return "Не удалось сохранить изменения на сервер.";
     }
+    if (message.indexOf("STORE_PRECONDITION_REQUIRED") >= 0) {
+      return "Нужно обновить данные с сервера. Перезагрузите админку и повторите.";
+    }
     if (message.indexOf("STORE_VERSION_MISMATCH") >= 0) {
       return "Данные изменились в другой сессии. Обновите страницу админки и повторите.";
     }

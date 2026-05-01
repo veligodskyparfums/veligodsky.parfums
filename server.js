@@ -45,8 +45,8 @@ const ADMIN_PASSWORD_HASH_ITERATIONS = 180000;
 const ADMIN_PASSWORD_HASH_BYTES = 32;
 const ADMIN_PASSWORD_SALT_BYTES = 16;
 const ADMIN_PASSWORD_HASH_DIGEST = "sha256";
-const STORE_SHRINK_GUARD_MIN_DROP_COUNT = Math.max(1, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_COUNT || 25));
-const STORE_SHRINK_GUARD_MIN_DROP_RATIO = Math.min(0.95, Math.max(0.1, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_RATIO || 0.35)));
+const STORE_SHRINK_GUARD_MIN_DROP_COUNT = Math.max(1, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_COUNT || 10));
+const STORE_SHRINK_GUARD_MIN_DROP_RATIO = Math.min(0.95, Math.max(0.05, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_RATIO || 0.15)));
 const STORE_HISTORY_MAX_ROWS = Math.max(20, Number(process.env.STORE_HISTORY_MAX_ROWS || 300));
 
 const RATE_LIMIT_RULES = {
@@ -935,7 +935,7 @@ function isIfMatchSatisfied(req, currentEtag) {
   const raw = req && req.headers ? req.headers["if-match"] : "";
   const header = Array.isArray(raw) ? raw.join(",") : String(raw || "");
   if (!header.trim()) {
-    return true;
+    return false;
   }
   if (!currentEtag) {
     return false;
@@ -1315,7 +1315,17 @@ function isTrueLike(value) {
 }
 
 function isForceFileStorage() {
-  return isTrueLike(process.env.FORCE_FILE_STORAGE);
+  const forced = isTrueLike(process.env.FORCE_FILE_STORAGE);
+  if (!forced) {
+    return false;
+  }
+
+  if (isProduction() && !isTrueLike(process.env.ALLOW_FORCE_FILE_STORAGE_IN_PRODUCTION)) {
+    console.warn("FORCE_FILE_STORAGE is ignored in production. Set ALLOW_FORCE_FILE_STORAGE_IN_PRODUCTION=true to override.");
+    return false;
+  }
+
+  return true;
 }
 
 function isProduction() {
@@ -1511,6 +1521,16 @@ async function handleStoreApi(req, res) {
 
   if (req.method === "PUT") {
     if (!ensureAdminAuthorized(req, res)) {
+      return;
+    }
+
+    const ifMatchRaw = req && req.headers ? req.headers["if-match"] : "";
+    const ifMatchHeader = Array.isArray(ifMatchRaw) ? ifMatchRaw.join(",") : String(ifMatchRaw || "");
+    if (!ifMatchHeader.trim()) {
+      sendJson(res, 428, {
+        error: "STORE_PRECONDITION_REQUIRED",
+        message: "Missing If-Match header. Refresh admin data and retry."
+      });
       return;
     }
 

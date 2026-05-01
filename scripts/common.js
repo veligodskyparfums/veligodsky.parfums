@@ -962,6 +962,13 @@
   }
 
   async function pushRemoteData(data) {
+    if (!remoteDataEtag) {
+      await fetchRemoteData();
+    }
+    if (!remoteDataEtag) {
+      throw new Error("STORE_PRECONDITION_REQUIRED");
+    }
+
     var headers = {
       "Content-Type": "application/json",
       "Accept": "application/json"
@@ -970,9 +977,7 @@
     if (adminToken) {
       headers.Authorization = "Bearer " + adminToken;
     }
-    if (remoteDataEtag) {
-      headers["If-Match"] = remoteDataEtag;
-    }
+    headers["If-Match"] = remoteDataEtag;
 
     var response = await fetchWithTimeout(API_DATA_URL, {
       method: "PUT",
