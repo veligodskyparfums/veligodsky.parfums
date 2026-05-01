@@ -5,6 +5,7 @@ const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
 const crypto = require("crypto");
+const zlib = require("zlib");
 
 const HOST = "0.0.0.0";
 const PORT = Number(process.env.PORT) || 3000;
@@ -49,6 +50,8 @@ const STORE_SHRINK_GUARD_MIN_DROP_COUNT = Math.max(1, Number(process.env.STORE_S
 const STORE_SHRINK_GUARD_MIN_DROP_RATIO = Math.min(0.95, Math.max(0.05, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_RATIO || 0.15)));
 const STORE_HISTORY_MAX_ROWS = Math.max(20, Number(process.env.STORE_HISTORY_MAX_ROWS || 300));
 const STORE_DELETE_INTENT_SAMPLE_LIMIT = Math.max(1, Number(process.env.STORE_DELETE_INTENT_SAMPLE_LIMIT || 8));
+const RESPONSE_COMPRESSION_MIN_BYTES = Math.max(512, Number(process.env.RESPONSE_COMPRESSION_MIN_BYTES || 1400));
+const RESPONSE_COMPRESSION_MAX_BYTES = Math.max(64 * 1024, Number(process.env.RESPONSE_COMPRESSION_MAX_BYTES || 4 * 1024 * 1024));
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -135,8 +138,8 @@ const CONTENT_SECURITY_POLICY = [
   "img-src 'self' data: blob: https:",
   "script-src 'self' https://mc.yandex.ru https://www.googletagmanager.com https://www.google-analytics.com",
   "connect-src 'self' https://mc.yandex.ru https://www.google-analytics.com https://region1.google-analytics.com https://stats.g.doubleclick.net",
-  "style-src 'self' 'unsafe-inline'",
-  "font-src 'self' data:",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
   "frame-src https://mc.yandex.ru",
   "form-action 'self'"
 ].join("; ");
@@ -188,21 +191,129 @@ function cloneData(data) {
   return JSON.parse(JSON.stringify(data));
 }
 
+function appendVaryHeader(value, token) {
+  const existing = safeString(value);
+  const normalizedToken = safeString(token).trim();
+  if (!normalizedToken) {
+    return existing;
+  }
+
+  if (!existing) {
+    return normalizedToken;
+  }
+
+  const parts = existing.split(",").map((part) => safeString(part).trim().toLowerCase()).filter(Boolean);
+  if (parts.includes(normalizedToken.toLowerCase())) {
+    return existing;
+  }
+
+  return existing + ", " + normalizedToken;
+}
+
+function isCompressibleContentType(contentType) {
+  const safe = safeString(contentType).toLowerCase();
+  if (!safe) {
+    return false;
+  }
+
+  return (
+    safe.startsWith("text/")
+    || safe.includes("application/json")
+    || safe.includes("application/javascript")
+    || safe.includes("image/svg+xml")
+    || safe.includes("application/xml")
+  );
+}
+
+function getAcceptedEncoding(req) {
+  const raw = req && req.headers ? req.headers["accept-encoding"] : "";
+  const safe = Array.isArray(raw) ? raw.join(",") : safeString(raw);
+  if (!safe) {
+    return "";
+  }
+  const lower = safe.toLowerCase();
+  if (lower.includes("br")) {
+    return "br";
+  }
+  if (lower.includes("gzip")) {
+    return "gzip";
+  }
+  return "";
+}
+
+function compressResponseBody(buffer, encoding) {
+  if (!Buffer.isBuffer(buffer) || !encoding) {
+    return buffer;
+  }
+
+  if (encoding === "br") {
+    return zlib.brotliCompressSync(buffer, {
+      params: {
+        [zlib.constants.BROTLI_PARAM_QUALITY]: 4
+      }
+    });
+  }
+
+  if (encoding === "gzip") {
+    return zlib.gzipSync(buffer, { level: 6 });
+  }
+
+  return buffer;
+}
+
+function writeBufferedResponse(res, statusCode, headers, body) {
+  const baseHeaders = Object.assign({}, headers || {});
+  const request = res && res.__request ? res.__request : null;
+  const method = safeString(request && request.method).toUpperCase();
+
+  let payload = Buffer.isBuffer(body) ? body : Buffer.from(String(body || ""), "utf8");
+  const contentType = baseHeaders["Content-Type"] || baseHeaders["content-type"] || "";
+
+  const canCompress = method !== "HEAD"
+    && statusCode >= 200
+    && statusCode !== 204
+    && statusCode !== 304
+    && payload.length >= RESPONSE_COMPRESSION_MIN_BYTES
+    && payload.length <= RESPONSE_COMPRESSION_MAX_BYTES
+    && !baseHeaders["Content-Encoding"]
+    && !baseHeaders["content-encoding"]
+    && isCompressibleContentType(contentType);
+
+  if (canCompress) {
+    const encoding = getAcceptedEncoding(request);
+    if (encoding) {
+      try {
+        payload = compressResponseBody(payload, encoding);
+        baseHeaders["Content-Encoding"] = encoding;
+        baseHeaders.Vary = appendVaryHeader(baseHeaders.Vary, "Accept-Encoding");
+      } catch (error) {
+        // Compression is an optimization; fallback to plain body.
+      }
+    }
+  }
+
+  baseHeaders["Content-Length"] = payload.length;
+  res.writeHead(statusCode, baseHeaders);
+
+  if (method === "HEAD") {
+    res.end();
+    return;
+  }
+
+  res.end(payload);
+}
+
 function sendJson(res, statusCode, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(statusCode, {
+  writeBufferedResponse(res, statusCode, {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body),
     "Cache-Control": "no-store"
-  });
-  res.end(body);
+  }, JSON.stringify(payload));
 }
 
 function sendText(res, statusCode, text) {
-  res.writeHead(statusCode, {
+  writeBufferedResponse(res, statusCode, {
     "Content-Type": "text/plain; charset=utf-8"
-  });
-  res.end(text);
+  }, String(text || ""));
 }
 
 function buildWeakEtagFromString(value) {
@@ -271,16 +382,7 @@ function sendStoreDataResponse(req, res, statusCode, payload) {
     return;
   }
 
-  res.writeHead(statusCode, Object.assign({}, baseHeaders, {
-    "Content-Length": Buffer.byteLength(body)
-  }));
-
-  if (req.method === "HEAD") {
-    res.end();
-    return;
-  }
-
-  res.end(body);
+  writeBufferedResponse(res, statusCode, baseHeaders, body);
 }
 
 function handleBodyReadFailure(res, error) {
@@ -2259,6 +2361,10 @@ function getSafeFilePath(urlPathname) {
     pathname = "/index.html";
   }
 
+  if (pathname === "/favicon.ico") {
+    pathname = "/favicon.svg";
+  }
+
   if (pathname === "/admin") {
     pathname = "/admin/index.html";
   }
@@ -2427,6 +2533,7 @@ async function start() {
   storeRepository = await createStoreRepository();
 
   httpServer = http.createServer((req, res) => {
+    res.__request = req;
     req.setTimeout(SERVER_REQUEST_TIMEOUT_MS);
     requestHandler(req, res);
   });

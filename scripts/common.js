@@ -16,6 +16,8 @@
   var REMOTE_READ_TIMEOUT_MS = 8000;
   var REMOTE_WRITE_TIMEOUT_MS = 12000;
   var REVIEW_TIMEOUT_MS = 10000;
+  var REMOTE_READ_RETRY_COUNT = 2;
+  var REMOTE_READ_RETRY_BASE_DELAY_MS = 450;
   var numberFormatter = new Intl.NumberFormat("ru-RU");
   var dataCache = null;
   var syncPromise = null;
@@ -43,25 +45,25 @@
   var defaultHomepageReviews = [
     {
       id: "hr_001",
-      author: "РђРЅРЅР°",
-      city: "РњРѕСЃРєРІР°",
-      text: "РћС‡РµРЅСЊ РїСЂРёСЏС‚РЅС‹Р№ СЃРµСЂРІРёСЃ: РїРѕРјРѕРіР»Рё РїРѕРґРѕР±СЂР°С‚СЊ Р°СЂРѕРјР°С‚ РїРѕРґ Р·Р°РїСЂРѕСЃ Рё Р±С‹СЃС‚СЂРѕ РѕС‚РїСЂР°РІРёР»Рё Р·Р°РєР°Р·.",
+      author: "Анна",
+      city: "Москва",
+      text: "Очень приятный сервис: помогли подобрать аромат под запрос и быстро отправили заказ.",
       rating: 5,
       createdAt: "2026-03-20T12:00:00.000Z"
     },
     {
       id: "hr_002",
-      author: "Р”РµРЅРёСЃ",
-      city: "РЎР°РЅРєС‚-РџРµС‚РµСЂР±СѓСЂРі",
-      text: "Р‘СЂР°Р» РІ РїРѕРґР°СЂРѕРє, РІСЃРµ РїСЂРёС€Р»Рѕ РІ СЃСЂРѕРє. РЈРїР°РєРѕРІРєР° Р°РєРєСѓСЂР°С‚РЅР°СЏ, Р°СЂРѕРјР°С‚ РѕСЂРёРіРёРЅР°Р»СЊРЅС‹Р№.",
+      author: "Денис",
+      city: "Санкт-Петербург",
+      text: "Брал в подарок, все пришло в срок. Упаковка аккуратная, аромат оригинальный.",
       rating: 5,
       createdAt: "2026-03-21T15:30:00.000Z"
     },
     {
       id: "hr_003",
-      author: "Р•РєР°С‚РµСЂРёРЅР°",
-      city: "РљР°Р·Р°РЅСЊ",
-      text: "РџРѕРЅСЂР°РІРёР»РѕСЃСЊ, С‡С‚Рѕ РјРѕР¶РЅРѕ РїРѕР»СѓС‡РёС‚СЊ РєРѕРЅСЃСѓР»СЊС‚Р°С†РёСЋ РІ Telegram Рё РІС‹Р±СЂР°С‚СЊ РїСЂРѕР±РЅРёРє Рє Р·Р°РєР°Р·Сѓ.",
+      author: "Екатерина",
+      city: "Казань",
+      text: "Понравилось, что можно получить консультацию в Telegram и выбрать пробник к заказу.",
       rating: 5,
       createdAt: "2026-03-22T09:15:00.000Z"
     }
@@ -73,7 +75,7 @@
       name: "Aventus",
       brand: "Creed",
       gender: "male",
-      description: "РЎРІРµР¶РёР№ С†РёС‚СЂСѓСЃРѕРІРѕ-РґСЂРµРІРµСЃРЅС‹Р№ Р°СЂРѕРјР°С‚ СЃ Р°РєРєРѕСЂРґРѕРј Р°РЅР°РЅР°СЃР°.",
+      description: "Свежий цитрусово-древесный аромат с аккордом ананаса.",
       image: placeholderImages[0],
       volumes: [
         { ml: 10, price: 4200 },
@@ -88,7 +90,7 @@
       name: "Baccarat Rouge 540",
       brand: "Maison Francis Kurkdjian",
       gender: "unisex",
-      description: "РђРјР±СЂРѕРІРѕ-РґСЂРµРІРµСЃРЅС‹Р№ С€Р»РµР№С„ СЃ С€Р°С„СЂР°РЅРѕРј Рё РєРµРґСЂРѕРј.",
+      description: "Амброво-древесный шлейф с шафраном и кедром.",
       image: placeholderImages[1],
       volumes: [
         { ml: 10, price: 5200 },
@@ -103,7 +105,7 @@
       name: "Tobacco Vanille",
       brand: "Tom Ford",
       gender: "unisex",
-      description: "РўР°Р±Р°Рє, РІР°РЅРёР»СЊ Рё СЃРїРµС†РёРё РІ РЅР°СЃС‹С‰РµРЅРЅРѕРј РІРµС‡РµСЂРЅРµРј Р·РІСѓС‡Р°РЅРёРё.",
+      description: "Табак, ваниль и специи в насыщенном вечернем звучании.",
       image: placeholderImages[2],
       volumes: [
         { ml: 10, price: 3900 },
@@ -118,7 +120,7 @@
       name: "Sauvage Elixir",
       brand: "Dior",
       gender: "male",
-      description: "Р“Р»СѓР±РѕРєРёР№ РїСЂСЏРЅС‹Р№ Р°СЂРѕРјР°С‚ СЃ Р»Р°РІР°РЅРґРѕР№ Рё РґСЂРµРІРµСЃРЅС‹РјРё РЅРѕС‚Р°РјРё.",
+      description: "Глубокий пряный аромат с лавандой и древесными нотами.",
       image: placeholderImages[3],
       volumes: [
         { ml: 10, price: 2800 },
@@ -132,7 +134,7 @@
       name: "Coco Mademoiselle",
       brand: "Chanel",
       gender: "female",
-      description: "Р¦РёС‚СЂСѓСЃРѕРІРѕ-С†РІРµС‚РѕС‡РЅС‹Р№ Р°СЂРѕРјР°С‚ СЃ СЌР»РµРіР°РЅС‚РЅРѕР№ Р±Р°Р·РѕР№ РїР°С‡СѓР»Рё.",
+      description: "Цитрусово-цветочный аромат с элегантной базой пачули.",
       image: placeholderImages[4],
       volumes: [
         { ml: 10, price: 2300 },
@@ -147,7 +149,7 @@
       name: "Gypsy Water",
       brand: "Byredo",
       gender: "unisex",
-      description: "Р›РµРіРєРёР№ РґСЂРµРІРµСЃРЅРѕ-С†РёС‚СЂСѓСЃРѕРІС‹Р№ Р°СЂРѕРјР°С‚ СЃ РјРѕР¶Р¶РµРІРµР»СЊРЅРёРєРѕРј Рё РІР°РЅРёР»СЊСЋ.",
+      description: "Лёгкий древесно-цитрусовый аромат с можжевельником и ванилью.",
       image: placeholderImages[0],
       volumes: [
         { ml: 10, price: 3200 },
@@ -162,7 +164,7 @@
       name: "Oud for Greatness",
       brand: "Initio",
       gender: "unisex",
-      description: "РРЅС‚РµРЅСЃРёРІРЅС‹Р№ СѓРґРѕРІС‹Р№ Р°СЂРѕРјР°С‚ СЃ С€Р°С„СЂР°РЅРѕРј Рё РјСѓСЃРєСѓСЃРѕРј.",
+      description: "Интенсивный удовый аромат с шафраном и мускусом.",
       image: placeholderImages[1],
       volumes: [
         { ml: 5, price: 3700 },
@@ -177,7 +179,7 @@
       name: "Santal 33",
       brand: "Le Labo",
       gender: "unisex",
-      description: "РљСѓР»СЊС‚РѕРІС‹Р№ РґСЂРµРІРµСЃРЅС‹Р№ Р°СЂРѕРјР°С‚ СЃ РЅРѕС‚Р°РјРё СЃР°РЅРґР°Р»Р° Рё РєРѕР¶Рё.",
+      description: "Культовый древесный аромат с нотами сандала и кожи.",
       image: placeholderImages[2],
       volumes: [
         { ml: 10, price: 4100 },
@@ -192,7 +194,7 @@
       name: "Angels Share",
       brand: "Kilian",
       gender: "unisex",
-      description: "РљРѕРЅСЊСЏС‡РЅС‹Р№ Р°РєРєРѕСЂРґ СЃ РєРѕСЂРёС†РµР№, РґСѓР±РѕРј Рё РїСЂР°Р»РёРЅРµ.",
+      description: "Коньячный аккорд с корицей, дубом и пралине.",
       image: placeholderImages[3],
       volumes: [
         { ml: 10, price: 3400 },
@@ -206,7 +208,7 @@
       name: "Erba Pura",
       brand: "Xerjoff",
       gender: "unisex",
-      description: "РЇСЂРєРёР№ С„СЂСѓРєС‚РѕРІС‹Р№ Р°СЂРѕРјР°С‚ СЃ РјСѓСЃРєСѓСЃРЅС‹Рј С€Р»РµР№С„РѕРј.",
+      description: "Яркий фруктовый аромат с мускусным шлейфом.",
       image: placeholderImages[4],
       volumes: [
         { ml: 10, price: 3000 },
@@ -728,6 +730,30 @@
       });
   }
 
+  function delayMs(ms) {
+    var safeMs = Math.max(0, Math.round(toNumber(ms, 0)));
+    return new Promise(function (resolve) {
+      setTimeout(resolve, safeMs);
+    });
+  }
+
+  function shouldRetryReadError(error) {
+    var message = String(error && error.message || "");
+    if (!message) {
+      return false;
+    }
+    if (message.indexOf("NETWORK_TIMEOUT") >= 0) {
+      return true;
+    }
+    if (message.indexOf("Failed to fetch") >= 0 || message.indexOf("NetworkError") >= 0) {
+      return true;
+    }
+    if (message.indexOf("HTTP 5") >= 0) {
+      return true;
+    }
+    return false;
+  }
+
   function parseHttpStatusFromError(error) {
     var message = String(error && error.message || "");
     var match = message.match(/HTTP\s+(\d{3})/);
@@ -962,6 +988,29 @@
     return normalizeData(payload);
   }
 
+  async function fetchRemoteDataWithRetry() {
+    var attempts = Math.max(1, Math.round(Number(REMOTE_READ_RETRY_COUNT) || 1));
+    var lastError = null;
+
+    for (var attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await fetchRemoteData();
+      } catch (error) {
+        lastError = error;
+        if (attempt >= attempts || !shouldRetryReadError(error)) {
+          throw error;
+        }
+        var waitMs = REMOTE_READ_RETRY_BASE_DELAY_MS * attempt;
+        await delayMs(waitMs);
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+    throw new Error("REMOTE_READ_FAILED");
+  }
+
   async function pushRemoteData(data, options) {
     var safeOptions = options && typeof options === "object" ? options : {};
     if (!remoteDataEtag) {
@@ -1046,7 +1095,7 @@
     }
 
     try {
-      var remote = await fetchRemoteData();
+      var remote = await fetchRemoteDataWithRetry();
       return saveData(remote);
     } catch (error) {
       return loadData();
@@ -1068,7 +1117,7 @@
           return loadData();
         }
 
-        var remote = await fetchRemoteData();
+        var remote = await fetchRemoteDataWithRetry();
         return saveData(remote);
       })
       .finally(function () {

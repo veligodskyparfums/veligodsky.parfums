@@ -22,6 +22,7 @@
   var AUTO_SYNC_RETRY_BASE_MS = 15 * 1000;
   var AUTO_SYNC_MAX_BACKOFF_MS = 8 * 60 * 1000;
   var AUTO_SYNC_FOCUS_DELAY_MS = 1500;
+  var FILTER_INPUT_DEBOUNCE_MS = 120;
   var MAX_HERO_IMAGE_LENGTH = 900 * 1024;
   var REVIEWS_COLLAPSED_KEY = "veligodsky_reviews_collapsed_v1";
   var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
@@ -52,6 +53,8 @@
   var autoSyncNetworkBound = false;
   var backupNoticeTimerId = null;
   var moscowTimeFormatter = null;
+  var filtersDebounceTimer = null;
+  var filtersResetPending = false;
 
   document.addEventListener("DOMContentLoaded", function () {
     init().catch(function () {
@@ -226,10 +229,10 @@
         return;
       }
       field.addEventListener("input", function () {
-        applyFilters(true);
+        scheduleApplyFilters(true);
       });
       field.addEventListener("change", function () {
-        applyFilters(true);
+        scheduleApplyFilters(true);
       });
     });
 
@@ -1029,6 +1032,20 @@
     });
 
     renderCatalog();
+  }
+
+  function scheduleApplyFilters(resetVisibleCount) {
+    if (resetVisibleCount) {
+      filtersResetPending = true;
+    }
+    if (filtersDebounceTimer) {
+      clearTimeout(filtersDebounceTimer);
+    }
+    filtersDebounceTimer = setTimeout(function () {
+      filtersDebounceTimer = null;
+      applyFilters(Boolean(filtersResetPending));
+      filtersResetPending = false;
+    }, FILTER_INPUT_DEBOUNCE_MS);
   }
 
   function resetFilters() {
