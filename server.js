@@ -48,6 +48,7 @@ const ADMIN_PASSWORD_HASH_DIGEST = "sha256";
 const STORE_SHRINK_GUARD_MIN_DROP_COUNT = Math.max(1, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_COUNT || 10));
 const STORE_SHRINK_GUARD_MIN_DROP_RATIO = Math.min(0.95, Math.max(0.05, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_RATIO || 0.15)));
 const STORE_HISTORY_MAX_ROWS = Math.max(20, Number(process.env.STORE_HISTORY_MAX_ROWS || 300));
+const STORE_DELETE_INTENT_SAMPLE_LIMIT = Math.max(1, Number(process.env.STORE_DELETE_INTENT_SAMPLE_LIMIT || 8));
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -79,6 +80,12 @@ const RATE_LIMIT_RULES = {
     max: 20,
     windowMs: 10 * 60 * 1000,
     message: "Too many password change attempts"
+  },
+  adminSnapshot: {
+    name: "admin_snapshot",
+    max: 20,
+    windowMs: 10 * 60 * 1000,
+    message: "Too many snapshot attempts"
   },
   clientErrors: {
     name: "client_errors",
@@ -322,6 +329,10 @@ function getRateLimitRule(pathname, method) {
 
   if (safePath === "/api/admin/password" && safeMethod === "POST") {
     return RATE_LIMIT_RULES.adminPassword;
+  }
+
+  if (safePath === "/api/admin/snapshot" && safeMethod === "POST") {
+    return RATE_LIMIT_RULES.adminSnapshot;
   }
 
   if (safePath === "/api/client-errors" && safeMethod === "POST") {
@@ -971,6 +982,53 @@ function hasForceReplaceFlag(req, parsedPayload) {
   return false;
 }
 
+function parseNonNegativeInteger(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  const normalized = Math.round(parsed);
+  if (normalized < 0) {
+    return null;
+  }
+  return normalized;
+}
+
+function getExpectedRemovedProductsCount(req, parsedPayload) {
+  const headerRaw = req && req.headers ? req.headers["x-store-expected-removed-products"] : "";
+  const headerValue = Array.isArray(headerRaw) ? headerRaw.join(",") : String(headerRaw || "").trim();
+  if (headerValue) {
+    const parsedHeader = parseNonNegativeInteger(headerValue);
+    if (parsedHeader !== null) {
+      return parsedHeader;
+    }
+  }
+
+  if (parsedPayload && typeof parsedPayload === "object" && parsedPayload.meta && typeof parsedPayload.meta === "object") {
+    const parsedMeta = parseNonNegativeInteger(parsedPayload.meta.expectedRemovedProducts);
+    if (parsedMeta !== null) {
+      return parsedMeta;
+    }
+  }
+
+  return null;
+}
+
+function getRemovedProductIds(currentData, nextData) {
+  const currentProducts = currentData && Array.isArray(currentData.products) ? currentData.products : [];
+  const nextProducts = nextData && Array.isArray(nextData.products) ? nextData.products : [];
+  const nextIds = new Set(
+    nextProducts
+      .map((product) => safeString(product && product.id))
+      .filter(Boolean)
+  );
+
+  return currentProducts
+    .map((product) => safeString(product && product.id))
+    .filter(Boolean)
+    .filter((id) => !nextIds.has(id));
+}
+
 function getCatalogShrinkGuard(currentData, nextData) {
   const currentCount = getProductsCount(currentData);
   const nextCount = getProductsCount(nextData);
@@ -987,6 +1045,29 @@ function getCatalogShrinkGuard(currentData, nextData) {
     nextCount,
     dropCount,
     dropRatio
+  };
+}
+
+function getCatalogDeleteIntentGuard(currentData, nextData, expectedRemovedProducts) {
+  const removedIds = getRemovedProductIds(currentData, nextData);
+  const removedCount = removedIds.length;
+  if (removedCount <= 0) {
+    return {
+      blocked: false,
+      expectedRemovedProducts,
+      removedCount,
+      removedIdsSample: []
+    };
+  }
+
+  const expected = parseNonNegativeInteger(expectedRemovedProducts);
+  const blocked = expected === null || expected !== removedCount;
+
+  return {
+    blocked,
+    expectedRemovedProducts: expected,
+    removedCount,
+    removedIdsSample: removedIds.slice(0, STORE_DELETE_INTENT_SAMPLE_LIMIT)
   };
 }
 
@@ -1197,6 +1278,15 @@ class FileStoreRepository {
     }
   }
 
+  async createSnapshot(source) {
+    const current = await this.read();
+    await this.appendHistorySnapshot(current);
+    return {
+      source: safeString(source || "manual_admin") || "manual_admin",
+      productsCount: getProductsCount(current)
+    };
+  }
+
   async close() {
     return;
   }
@@ -1291,6 +1381,16 @@ class PostgresStoreRepository {
       + ")",
       [STORE_HISTORY_MAX_ROWS]
     );
+  }
+
+  async createSnapshot(source) {
+    const current = await this.read();
+    const safeSource = safeString(source || "manual_admin").slice(0, 64) || "manual_admin";
+    await this.appendHistorySnapshot(current, safeSource);
+    return {
+      source: safeSource,
+      productsCount: getProductsCount(current)
+    };
   }
 
   async close() {
@@ -1555,6 +1655,7 @@ async function handleStoreApi(req, res) {
     }
 
     const forceReplaceFromPayload = forceReplaceProducts || hasForceReplaceFlag(req, parsed);
+    const expectedRemovedProducts = getExpectedRemovedProductsCount(req, parsed);
 
     try {
       const saved = await runSerializedStoreMutation(async () => {
@@ -1575,6 +1676,14 @@ async function handleStoreApi(req, res) {
           const guardError = new Error("CATALOG_SHRINK_BLOCKED");
           guardError.code = "CATALOG_SHRINK_BLOCKED";
           guardError.details = shrinkGuard;
+          throw guardError;
+        }
+
+        const deleteIntentGuard = getCatalogDeleteIntentGuard(currentData, nextPayload, expectedRemovedProducts);
+        if (deleteIntentGuard.blocked && !forceReplaceFromPayload) {
+          const guardError = new Error("CATALOG_DELETE_INTENT_MISMATCH");
+          guardError.code = "CATALOG_DELETE_INTENT_MISMATCH";
+          guardError.details = deleteIntentGuard;
           throw guardError;
         }
 
@@ -1607,6 +1716,17 @@ async function handleStoreApi(req, res) {
           nextCount: details.nextCount || 0,
           dropCount: details.dropCount || 0,
           dropRatio: Number.isFinite(details.dropRatio) ? details.dropRatio : 0
+        });
+        return;
+      }
+      if (error.code === "CATALOG_DELETE_INTENT_MISMATCH") {
+        const details = error.details || {};
+        sendJson(res, 409, {
+          error: "CATALOG_DELETE_INTENT_MISMATCH",
+          message: "Blocked catalog save because deletion intent does not match server state. Refresh admin and retry.",
+          expectedRemovedProducts: Number.isFinite(details.expectedRemovedProducts) ? details.expectedRemovedProducts : null,
+          removedCount: Number.isFinite(details.removedCount) ? details.removedCount : 0,
+          removedIdsSample: Array.isArray(details.removedIdsSample) ? details.removedIdsSample : []
         });
         return;
       }
@@ -1775,6 +1895,68 @@ async function handleAdminPasswordApi(req, res) {
 
   revokeAdminSessions(getBearerToken(req));
   sendJson(res, 200, { ok: true });
+}
+
+async function handleAdminSnapshotApi(req, res) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  let raw = "";
+  let parsed = {};
+  try {
+    raw = await readRequestBody(req);
+  } catch (error) {
+    if (handleBodyReadFailure(res, error)) {
+      return;
+    }
+    throw error;
+  }
+
+  if (safeString(raw).trim()) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      sendJson(res, 400, { error: "INVALID_JSON" });
+      return;
+    }
+  }
+
+  const safeReason = safeString(parsed && parsed.reason).slice(0, 120);
+  const safeSource = safeReason ? "manual_admin" : "manual_admin";
+
+  const snapshot = await runSerializedStoreMutation(async () => {
+    if (storeRepository && typeof storeRepository.createSnapshot === "function") {
+      return storeRepository.createSnapshot(safeSource);
+    }
+
+    const currentData = await storeRepository.read();
+    if (storeRepository && typeof storeRepository.appendHistorySnapshot === "function") {
+      await storeRepository.appendHistorySnapshot(currentData, safeSource);
+    }
+    return {
+      source: safeSource,
+      productsCount: getProductsCount(currentData)
+    };
+  });
+
+  sendJson(res, 200, {
+    ok: true,
+    source: safeString(snapshot && snapshot.source) || safeSource,
+    productsCount: Number.isFinite(Number(snapshot && snapshot.productsCount))
+      ? Number(snapshot.productsCount)
+      : 0
+  });
 }
 
 async function handleProductReviewsApi(req, res) {
@@ -2192,6 +2374,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/admin/password") {
       await handleAdminPasswordApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/admin/snapshot") {
+      await handleAdminSnapshotApi(req, res);
       return;
     }
 

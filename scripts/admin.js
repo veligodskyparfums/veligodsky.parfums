@@ -80,6 +80,7 @@
     elements.loginForm = document.getElementById("adminLoginForm");
     elements.passwordInput = document.getElementById("adminPasswordInput");
     elements.logoutBtn = document.getElementById("adminLogoutBtn");
+    elements.snapshotBtn = document.getElementById("adminSnapshotBtn");
 
     elements.settingsForm = document.getElementById("settingsForm");
     elements.telegramChannelInput = document.getElementById("telegramChannelInput");
@@ -132,6 +133,9 @@
   function bindEvents() {
     elements.loginForm.addEventListener("submit", onLogin);
     elements.logoutBtn.addEventListener("click", logout);
+    if (elements.snapshotBtn) {
+      elements.snapshotBtn.addEventListener("click", onCreateSnapshotClick);
+    }
 
     elements.settingsForm.addEventListener("submit", saveSettings);
     if (elements.heroImageInput) {
@@ -406,6 +410,36 @@
         return;
       }
       showToast(getSyncErrorToastMessage(error), true);
+    }
+  }
+
+  async function onCreateSnapshotClick() {
+    if (!elements.snapshotBtn) {
+      return;
+    }
+    if (typeof store.createAdminSnapshot !== "function") {
+      showToast("Обновите scripts/common.js на сервере.", true);
+      return;
+    }
+
+    var previousLabel = elements.snapshotBtn.textContent;
+    elements.snapshotBtn.disabled = true;
+    elements.snapshotBtn.textContent = "Сохраняем...";
+    try {
+      var result = await store.createAdminSnapshot();
+      var count = Math.max(0, Math.round(Number(result && result.productsCount) || 0));
+      showToast("Снимок каталога сохранён (" + count + " товаров)");
+    } catch (error) {
+      var message = String(error && error.message || "");
+      if (message.indexOf("401") >= 0 || message.indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+      } else {
+        showToast("Не удалось создать снимок каталога.", true);
+      }
+    } finally {
+      elements.snapshotBtn.disabled = false;
+      elements.snapshotBtn.textContent = previousLabel;
     }
   }
 
@@ -1260,6 +1294,9 @@
     }
     if (message.indexOf("CATALOG_SHRINK_BLOCKED") >= 0) {
       return "Сервер заблокировал подозрительное массовое удаление товаров. Обновите данные и повторите.";
+    }
+    if (message.indexOf("CATALOG_DELETE_INTENT_MISMATCH") >= 0) {
+      return "Сервер заблокировал сохранение: набор удаляемых товаров не совпал. Обновите админку и повторите.";
     }
     if (message.indexOf("NETWORK_TIMEOUT") >= 0) {
       return "Таймаут сети. Проверьте интернет и повторите.";

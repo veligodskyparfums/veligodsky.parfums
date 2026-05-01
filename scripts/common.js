@@ -7,6 +7,7 @@
   var API_DATA_URL = "/api/store-data";
   var API_ADMIN_AUTH_URL = "/api/admin/auth";
   var API_ADMIN_PASSWORD_URL = "/api/admin/password";
+  var API_ADMIN_SNAPSHOT_URL = "/api/admin/snapshot";
   var API_REVIEW_CAPTCHA_URL = "/api/review-captcha";
   var API_HOMEPAGE_REVIEWS_URL = "/api/homepage-reviews";
   var API_PRODUCT_REVIEWS_URL = "/api/product-reviews";
@@ -961,7 +962,8 @@
     return normalizeData(payload);
   }
 
-  async function pushRemoteData(data) {
+  async function pushRemoteData(data, options) {
+    var safeOptions = options && typeof options === "object" ? options : {};
     if (!remoteDataEtag) {
       await fetchRemoteData();
     }
@@ -978,6 +980,9 @@
       headers.Authorization = "Bearer " + adminToken;
     }
     headers["If-Match"] = remoteDataEtag;
+    if (Number.isFinite(Number(safeOptions.expectedRemovedProducts))) {
+      headers["X-Store-Expected-Removed-Products"] = String(Math.max(0, Math.round(Number(safeOptions.expectedRemovedProducts))));
+    }
 
     var response = await fetchWithTimeout(API_DATA_URL, {
       method: "PUT",
@@ -1073,15 +1078,16 @@
     return syncPromise;
   }
 
-  async function commitData(nextData) {
+  async function commitData(nextData, options) {
     var normalized = saveData(nextData);
+    var safeOptions = options && typeof options === "object" ? options : {};
 
     if (!canUseRemoteStore()) {
       return normalized;
     }
 
     try {
-      var remote = await pushRemoteData(normalized);
+      var remote = await pushRemoteData(normalized, safeOptions);
       clearPendingUnsyncedChanges();
       return saveData(remote);
     } catch (error) {
@@ -1102,12 +1108,71 @@
 
   async function saveProducts(products) {
     var data = loadData();
+    var previousProducts = Array.isArray(data.products) ? data.products.slice() : [];
     var normalizedProducts = Array.isArray(products)
       ? products.map(normalizeProduct).filter(Boolean)
       : [];
+    var nextIds = new Set(
+      normalizedProducts
+        .map(function (product) {
+          return String(product && product.id || "").trim();
+        })
+        .filter(Boolean)
+    );
+    var removedIds = previousProducts
+      .map(function (product) {
+        return String(product && product.id || "").trim();
+      })
+      .filter(Boolean)
+      .filter(function (id) {
+        return !nextIds.has(id);
+      });
     data.products = normalizedProducts;
-    var saved = await commitData(data);
+    var saved = await commitData(data, {
+      expectedRemovedProducts: removedIds.length
+    });
     return saved.products;
+  }
+
+  async function createAdminSnapshot(reason) {
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var payload = {};
+    var safeReason = String(reason || "").trim();
+    if (safeReason) {
+      payload.reason = safeReason.slice(0, 120);
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_SNAPSHOT_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      },
+      body: JSON.stringify(payload)
+    }, REMOTE_WRITE_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+
+    if (!response.ok) {
+      var errorCode = "";
+      try {
+        var errorPayload = await response.json();
+        errorCode = String(errorPayload && errorPayload.error || "").trim();
+      } catch (error) {
+        errorCode = "";
+      }
+      throw new Error(errorCode || ("HTTP " + response.status));
+    }
+
+    return response.json();
   }
 
   function getHomepageReviews() {
@@ -1577,6 +1642,7 @@
     API_DATA_URL: API_DATA_URL,
     API_ADMIN_AUTH_URL: API_ADMIN_AUTH_URL,
     API_ADMIN_PASSWORD_URL: API_ADMIN_PASSWORD_URL,
+    API_ADMIN_SNAPSHOT_URL: API_ADMIN_SNAPSHOT_URL,
     API_REVIEW_CAPTCHA_URL: API_REVIEW_CAPTCHA_URL,
     API_HOMEPAGE_REVIEWS_URL: API_HOMEPAGE_REVIEWS_URL,
     API_PRODUCT_REVIEWS_URL: API_PRODUCT_REVIEWS_URL,
@@ -1586,6 +1652,7 @@
     logoutAdmin: logoutAdmin,
     hasAdminSession: hasAdminSession,
     changeAdminPassword: changeAdminPassword,
+    createAdminSnapshot: createAdminSnapshot,
     uid: uid,
     getDefaultData: getDefaultData,
     loadData: loadData,
