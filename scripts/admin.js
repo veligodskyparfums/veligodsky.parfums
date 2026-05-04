@@ -23,7 +23,7 @@
   var CAPACITY_WARNING_STORE_MS = 1300;
   var CAPACITY_CRITICAL_HEALTH_MS = 1800;
   var CAPACITY_CRITICAL_STORE_MS = 2600;
-  var CATALOG_PAGE_SIZE = 200;
+  var CATALOG_PAGE_SIZE = 24;
   var SEARCH_INPUT_DEBOUNCE_MS = 160;
 
   var state = {
@@ -33,8 +33,14 @@
     draftMemory: null,
     homepageReviewEditingId: null,
     catalogSearchQuery: "",
-    catalogVisibleCount: CATALOG_PAGE_SIZE,
     catalogSearchDebounceTimer: null,
+    catalogItems: [],
+    catalogTotalCount: 0,
+    catalogFilteredCount: 0,
+    catalogHasMore: false,
+    catalogNextOffset: 0,
+    catalogLoading: false,
+    catalogRequestId: 0,
     expandedProductReviews: {},
     capacityMonitor: {
       timerId: null,
@@ -62,7 +68,7 @@
 
     if (typeof store.init === "function") {
       try {
-        await store.init();
+        await store.init({ skipRemote: true });
         if (isAuthenticated()) {
           refreshPanel();
         }
@@ -251,7 +257,9 @@
 
   function refreshPanel() {
     fillSettingsForm();
+    resetCatalogState();
     renderProducts();
+    loadCatalogPage({ reset: true, showErrorToast: false });
     renderHomepageReviews();
     if (!state.homepageReviewEditingId) {
       resetHomepageReviewEditor();
@@ -265,7 +273,7 @@
     saveEditorDraftFromForm();
     if (typeof store.syncFromServer === "function") {
       try {
-        await store.syncFromServer();
+        await store.syncFromServer({ includeProducts: false });
       } catch (error) {
         if (String(error && error.message || "").indexOf("401") >= 0) {
           logout();
@@ -277,7 +285,15 @@
         }
       }
     }
-    refreshPanel();
+    fillSettingsForm();
+    renderHomepageReviews();
+    if (!state.homepageReviewEditingId) {
+      resetHomepageReviewEditor();
+    }
+    if (!restoreEditorFromDraft()) {
+      resetEditor({ keepDraft: true });
+    }
+    await loadCatalogPage({ reset: true, showErrorToast: showErrorToast });
   }
 
   async function onLogin(event) {
@@ -1001,10 +1017,7 @@
       return;
     }
 
-    var products = store.getProducts();
-    var existing = products.find(function (item) {
-      return item.id === id;
-    });
+    var existing = getProductById(id);
 
     var image = state.imageData || (existing && existing.image) || store.getDefaultData().products[0].image;
     if (String(image).indexOf("data:image/") === 0 && String(image).length > MAX_IMAGE_DATA_LENGTH) {
@@ -1026,15 +1039,21 @@
       topMonth: elements.topMonthInput.checked
     };
 
-    var nextProducts = existing
-      ? products.map(function (item) {
-        return item.id === existing.id ? payload : item;
-      })
-      : [payload].concat(products);
     var isEditing = Boolean(existing);
 
     try {
-      await store.saveProducts(nextProducts);
+      if (typeof store.upsertAdminProduct === "function") {
+        await store.upsertAdminProduct(payload);
+      } else {
+        var fallbackProducts = store.getProducts();
+        var nextProducts = existing
+          ? fallbackProducts.map(function (item) {
+            return item.id === existing.id ? payload : item;
+          })
+          : [payload].concat(fallbackProducts);
+        await store.saveProducts(nextProducts);
+      }
+      await loadCatalogPage({ reset: true, showErrorToast: false });
       renderProducts();
       resetEditor();
       showToast(isEditing ? "Товар обновлён" : "Товар добавлен");
@@ -1077,9 +1096,7 @@
   }
 
   function startEdit(productId) {
-    var product = store.getProducts().find(function (item) {
-      return item.id === productId;
-    });
+    var product = getProductById(productId);
 
     if (!product) {
       return;
@@ -1113,10 +1130,7 @@
   }
 
   async function deleteProduct(productId) {
-    var products = store.getProducts();
-    var target = products.find(function (item) {
-      return item.id === productId;
-    });
+    var target = getProductById(productId);
 
     if (!target) {
       return;
@@ -1127,12 +1141,17 @@
       return;
     }
 
-    var next = products.filter(function (item) {
-      return item.id !== productId;
-    });
-
     try {
-      await store.saveProducts(next);
+      if (typeof store.deleteAdminProduct === "function") {
+        await store.deleteAdminProduct(productId);
+      } else {
+        var products = store.getProducts();
+        var next = products.filter(function (item) {
+          return item.id !== productId;
+        });
+        await store.saveProducts(next);
+      }
+      await loadCatalogPage({ reset: true, showErrorToast: false });
 
       var cart = store.getCart().filter(function (item) {
         return item.productId !== productId;
@@ -1224,23 +1243,31 @@
     var id = toggle.dataset.id;
     var mode = toggle.dataset.toggle;
     var checked = Boolean(toggle.checked);
-
-    var products = store.getProducts();
-    var next = products.map(function (item) {
-      if (item.id !== id) {
-        return item;
-      }
-      if (mode === "week") {
-        item.topWeek = checked;
-      }
-      if (mode === "month") {
-        item.topMonth = checked;
-      }
-      return item;
-    });
+    var product = getProductById(id);
+    if (!product) {
+      toggle.checked = !checked;
+      showToast("Товар не найден. Обновите каталог.", true);
+      return;
+    }
+    var nextProduct = Object.assign({}, product);
+    if (mode === "week") {
+      nextProduct.topWeek = checked;
+    }
+    if (mode === "month") {
+      nextProduct.topMonth = checked;
+    }
 
     try {
-      await store.saveProducts(next);
+      if (typeof store.upsertAdminProduct === "function") {
+        await store.upsertAdminProduct(nextProduct);
+      } else {
+        var products = store.getProducts();
+        var next = products.map(function (item) {
+          return item.id === id ? nextProduct : item;
+        });
+        await store.saveProducts(next);
+      }
+      await loadCatalogPage({ reset: true, showErrorToast: false });
       showToast("Топ-статус обновлён");
     } catch (error) {
       showToast("Не удалось обновить топ-статус на сервере.", true);
@@ -1249,10 +1276,7 @@
   }
 
   function findProductReviewEntry(productId, reviewId) {
-    var products = store.getProducts();
-    var product = products.find(function (item) {
-      return String(item && item.id) === String(productId);
-    });
+    var product = getProductById(productId);
     if (!product) {
       return null;
     }
@@ -1268,8 +1292,7 @@
 
     return {
       product: product,
-      review: review,
-      products: products
+      review: review
     };
   }
 
@@ -1310,7 +1333,6 @@
   function onCatalogSearchInput(event) {
     var nextQuery = normalizeSearchValue(event && event.target && event.target.value);
     state.catalogSearchQuery = nextQuery;
-    state.catalogVisibleCount = CATALOG_PAGE_SIZE;
 
     if (state.catalogSearchDebounceTimer) {
       clearTimeout(state.catalogSearchDebounceTimer);
@@ -1318,65 +1340,60 @@
 
     state.catalogSearchDebounceTimer = setTimeout(function () {
       state.catalogSearchDebounceTimer = null;
-      renderProducts();
+      loadCatalogPage({ reset: true, showErrorToast: false });
     }, SEARCH_INPUT_DEBOUNCE_MS);
   }
 
   function clearCatalogSearch() {
     state.catalogSearchQuery = "";
-    state.catalogVisibleCount = CATALOG_PAGE_SIZE;
     if (elements.adminCatalogSearchInput) {
       elements.adminCatalogSearchInput.value = "";
       elements.adminCatalogSearchInput.focus();
     }
-    renderProducts();
+    loadCatalogPage({ reset: true, showErrorToast: false });
   }
 
   function onCatalogLoadMore() {
-    state.catalogVisibleCount += CATALOG_PAGE_SIZE;
-    renderProducts();
-  }
-
-  function productMatchesSearch(product, query) {
-    if (!query) {
-      return true;
+    if (state.catalogLoading || !state.catalogHasMore) {
+      return;
     }
-
-    var safeProduct = product || {};
-    var volumes = Array.isArray(safeProduct.volumes) ? safeProduct.volumes : [];
-    var volumeIndex = volumes.map(function (item) {
-      return formatMlValue(item.ml) + "ml " + String(item.price || "");
-    }).join(" ");
-
-    var searchIndex = normalizeSearchValue([
-      safeProduct.name,
-      safeProduct.brand,
-      safeProduct.description,
-      store.getGenderLabel(safeProduct.gender),
-      store.getBottleTypeLabel(safeProduct.bottleType),
-      volumeIndex
-    ].join(" "));
-
-    return searchIndex.indexOf(query) >= 0;
+    loadCatalogPage({ reset: false, showErrorToast: true });
   }
 
-  function getFilteredProducts(products) {
-    var safeProducts = Array.isArray(products) ? products : [];
-    var query = state.catalogSearchQuery;
-    if (!query) {
-      return safeProducts.slice();
+  function resetCatalogState() {
+    if (state.catalogSearchDebounceTimer) {
+      clearTimeout(state.catalogSearchDebounceTimer);
+      state.catalogSearchDebounceTimer = null;
     }
-    return safeProducts.filter(function (product) {
-      return productMatchesSearch(product, query);
-    });
+    state.catalogItems = [];
+    state.catalogTotalCount = 0;
+    state.catalogFilteredCount = 0;
+    state.catalogHasMore = false;
+    state.catalogNextOffset = 0;
+    state.catalogLoading = false;
+    state.catalogRequestId += 1;
+    state.expandedProductReviews = {};
   }
 
-  function updateCatalogMeta(totalCount, filteredCount, visibleCount) {
+  function updateCatalogMeta() {
     if (!elements.adminCatalogMeta) {
       return;
     }
 
-    var shown = Math.min(filteredCount, visibleCount);
+    var totalCount = Math.max(0, Math.round(Number(state.catalogTotalCount) || 0));
+    var filteredCount = Math.max(0, Math.round(Number(state.catalogFilteredCount) || 0));
+    var shown = Array.isArray(state.catalogItems) ? state.catalogItems.length : 0;
+
+    if (state.catalogLoading && !shown) {
+      elements.adminCatalogMeta.textContent = "Загрузка каталога...";
+      return;
+    }
+
+    if (!totalCount && !state.catalogLoading) {
+      elements.adminCatalogMeta.textContent = "Каталог пуст. Добавьте первый аромат.";
+      return;
+    }
+
     if (!state.catalogSearchQuery) {
       elements.adminCatalogMeta.textContent = "Показано " + shown + " из " + totalCount + " товаров";
       return;
@@ -1385,18 +1402,129 @@
     elements.adminCatalogMeta.textContent = "Найдено " + filteredCount + " из " + totalCount + " товаров. Показано " + shown + ".";
   }
 
-  function updateCatalogLoadMoreButton(filteredCount, visibleCount) {
+  function updateCatalogLoadMoreButton() {
     if (!elements.adminCatalogLoadMoreBtn) {
       return;
     }
 
-    if (visibleCount < filteredCount) {
+    var shown = Array.isArray(state.catalogItems) ? state.catalogItems.length : 0;
+    var remaining = Math.max(0, Math.round(Number(state.catalogFilteredCount) || 0) - shown);
+
+    if (state.catalogHasMore && remaining > 0) {
       elements.adminCatalogLoadMoreBtn.classList.remove("hidden");
-      elements.adminCatalogLoadMoreBtn.textContent = "Показать ещё (" + (filteredCount - visibleCount) + ")";
+      elements.adminCatalogLoadMoreBtn.textContent = state.catalogLoading
+        ? "Загрузка..."
+        : "Показать ещё (" + remaining + ")";
+      elements.adminCatalogLoadMoreBtn.disabled = state.catalogLoading;
       return;
     }
 
     elements.adminCatalogLoadMoreBtn.classList.add("hidden");
+    elements.adminCatalogLoadMoreBtn.disabled = false;
+  }
+
+  function getProductById(productId) {
+    var safeId = String(productId || "").trim();
+    if (!safeId) {
+      return null;
+    }
+
+    var fromCatalog = (state.catalogItems || []).find(function (item) {
+      return String(item && item.id) === safeId;
+    });
+    if (fromCatalog) {
+      return fromCatalog;
+    }
+
+    var fallbackProducts = typeof store.getProducts === "function" ? store.getProducts() : [];
+    return (fallbackProducts || []).find(function (item) {
+      return String(item && item.id) === safeId;
+    }) || null;
+  }
+
+  async function loadCatalogPage(options) {
+    var safeOptions = options && typeof options === "object" ? options : {};
+    var shouldReset = Boolean(safeOptions.reset);
+    var showErrorToast = safeOptions.showErrorToast !== false;
+
+    if (typeof store.fetchAdminCatalogPage !== "function") {
+      var fallbackProducts = typeof store.getProducts === "function" ? store.getProducts() : [];
+      state.catalogItems = Array.isArray(fallbackProducts) ? fallbackProducts.slice(0, CATALOG_PAGE_SIZE) : [];
+      state.catalogTotalCount = Array.isArray(fallbackProducts) ? fallbackProducts.length : 0;
+      state.catalogFilteredCount = state.catalogTotalCount;
+      state.catalogHasMore = state.catalogTotalCount > state.catalogItems.length;
+      state.catalogNextOffset = state.catalogItems.length;
+      state.catalogLoading = false;
+      renderProducts();
+      return;
+    }
+
+    if (shouldReset) {
+      state.catalogItems = [];
+      state.catalogHasMore = false;
+      state.catalogNextOffset = 0;
+      state.expandedProductReviews = {};
+    }
+
+    var requestOffset = shouldReset ? 0 : Math.max(0, Math.round(Number(state.catalogNextOffset) || 0));
+    var requestId = state.catalogRequestId + 1;
+    state.catalogRequestId = requestId;
+    state.catalogLoading = true;
+    renderProducts();
+
+    try {
+      var payload = await store.fetchAdminCatalogPage({
+        query: state.catalogSearchQuery,
+        offset: requestOffset,
+        limit: CATALOG_PAGE_SIZE
+      });
+
+      if (requestId !== state.catalogRequestId) {
+        return;
+      }
+
+      var incomingItems = Array.isArray(payload && payload.items) ? payload.items : [];
+      if (shouldReset) {
+        state.catalogItems = incomingItems.slice();
+      } else {
+        var merged = Array.isArray(state.catalogItems) ? state.catalogItems.slice() : [];
+        var knownIds = {};
+        merged.forEach(function (item) {
+          knownIds[String(item && item.id || "")] = true;
+        });
+        incomingItems.forEach(function (item) {
+          var id = String(item && item.id || "");
+          if (!id || knownIds[id]) {
+            return;
+          }
+          knownIds[id] = true;
+          merged.push(item);
+        });
+        state.catalogItems = merged;
+      }
+
+      state.catalogTotalCount = Math.max(0, Math.round(Number(payload && payload.total) || 0));
+      state.catalogFilteredCount = Math.max(0, Math.round(Number(payload && payload.filteredTotal) || 0));
+      state.catalogHasMore = Boolean(payload && payload.hasMore);
+      state.catalogNextOffset = Math.max(0, Math.round(Number(payload && payload.nextOffset) || state.catalogItems.length));
+    } catch (error) {
+      if (requestId !== state.catalogRequestId) {
+        return;
+      }
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      if (showErrorToast) {
+        showToast("Не удалось загрузить каталог. Проверьте интернет и попробуйте ещё.", true);
+      }
+    } finally {
+      if (requestId === state.catalogRequestId) {
+        state.catalogLoading = false;
+        renderProducts();
+      }
+    }
   }
 
   function toggleProductReviews(productId) {
@@ -1425,9 +1553,7 @@
       return;
     }
 
-    var product = store.getProducts().find(function (item) {
-      return String(item.id) === safeProductId;
-    });
+    var product = getProductById(safeProductId);
     if (!product) {
       return;
     }
@@ -1439,10 +1565,7 @@
   }
 
   function findPendingProductReviewEntry(productId, reviewId) {
-    var products = store.getProducts();
-    var product = products.find(function (item) {
-      return String(item && item.id) === String(productId);
-    });
+    var product = getProductById(productId);
     if (!product) {
       return null;
     }
@@ -1458,8 +1581,7 @@
 
     return {
       product: product,
-      review: review,
-      products: products
+      review: review
     };
   }
 
@@ -1470,30 +1592,31 @@
       return;
     }
 
-    var nextProducts = entry.products.map(function (product) {
-      if (String(product.id) !== String(productId)) {
-        return product;
-      }
+    var product = Object.assign({}, entry.product);
+    var published = Array.isArray(product.reviews) ? product.reviews.slice() : [];
+    var pending = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
+    published.unshift(Object.assign({}, entry.review, {
+      id: String(entry.review.id || store.uid("pr")).replace(/^ppr_/, "pr_")
+    }));
 
-      var published = Array.isArray(product.reviews) ? product.reviews.slice() : [];
-      var pending = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
-      published.unshift(Object.assign({}, entry.review, {
-        id: String(entry.review.id || store.uid("pr")).replace(/^ppr_/, "pr_")
-      }));
-
-      return Object.assign({}, product, {
-        reviews: published,
-        pendingReviews: pending.filter(function (item) {
-          return String(item && item.id) !== String(reviewId);
-        })
-      });
+    var nextProduct = Object.assign({}, product, {
+      reviews: published,
+      pendingReviews: pending.filter(function (item) {
+        return String(item && item.id) !== String(reviewId);
+      })
     });
 
     try {
-      await store.saveProducts(nextProducts);
+      await store.upsertAdminProduct(nextProduct);
+      await loadCatalogPage({ reset: true, showErrorToast: false });
       renderProducts();
       showToast("Отзыв опубликован.");
     } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
       showToast("Не удалось опубликовать отзыв.", true);
     }
   }
@@ -1510,24 +1633,25 @@
       return;
     }
 
-    var nextProducts = entry.products.map(function (product) {
-      if (String(product.id) !== String(productId)) {
-        return product;
-      }
-
-      var pending = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
-      return Object.assign({}, product, {
-        pendingReviews: pending.filter(function (item) {
-          return String(item && item.id) !== String(reviewId);
-        })
-      });
+    var product = Object.assign({}, entry.product);
+    var pending = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
+    var nextProduct = Object.assign({}, product, {
+      pendingReviews: pending.filter(function (item) {
+        return String(item && item.id) !== String(reviewId);
+      })
     });
 
     try {
-      await store.saveProducts(nextProducts);
+      await store.upsertAdminProduct(nextProduct);
+      await loadCatalogPage({ reset: true, showErrorToast: false });
       renderProducts();
       showToast("Отзыв отклонён.");
     } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
       showToast("Не удалось отклонить отзыв.", true);
     }
   }
@@ -1580,31 +1704,26 @@
       return;
     }
 
-    var nextProducts = entry.products.map(function (product) {
-      if (String(product.id) !== String(productId)) {
-        return product;
+    var product = Object.assign({}, entry.product);
+    var currentReviews = Array.isArray(product.reviews) ? product.reviews : [];
+    var updatedReviews = currentReviews.map(function (review) {
+      if (String(review && review.id) !== String(reviewId)) {
+        return review;
       }
-
-      var currentReviews = Array.isArray(product.reviews) ? product.reviews : [];
-      var updatedReviews = currentReviews.map(function (review) {
-        if (String(review && review.id) !== String(reviewId)) {
-          return review;
-        }
-        return Object.assign({}, review, {
-          author: nextAuthor,
-          city: nextCity,
-          rating: nextRating,
-          text: nextText
-        });
+      return Object.assign({}, review, {
+        author: nextAuthor,
+        city: nextCity,
+        rating: nextRating,
+        text: nextText
       });
-
-      return Object.assign({}, product, {
-        reviews: updatedReviews
-      });
+    });
+    var nextProduct = Object.assign({}, product, {
+      reviews: updatedReviews
     });
 
     try {
-      await store.saveProducts(nextProducts);
+      await store.upsertAdminProduct(nextProduct);
+      await loadCatalogPage({ reset: true, showErrorToast: false });
       renderProducts();
       showToast("Отзыв обновлён.");
     } catch (error) {
@@ -1629,21 +1748,17 @@
       return;
     }
 
-    var nextProducts = entry.products.map(function (product) {
-      if (String(product.id) !== String(productId)) {
-        return product;
-      }
-
-      var currentReviews = Array.isArray(product.reviews) ? product.reviews : [];
-      return Object.assign({}, product, {
-        reviews: currentReviews.filter(function (review) {
-          return String(review && review.id) !== String(reviewId);
-        })
-      });
+    var product = Object.assign({}, entry.product);
+    var currentReviews = Array.isArray(product.reviews) ? product.reviews : [];
+    var nextProduct = Object.assign({}, product, {
+      reviews: currentReviews.filter(function (review) {
+        return String(review && review.id) !== String(reviewId);
+      })
     });
 
     try {
-      await store.saveProducts(nextProducts);
+      await store.upsertAdminProduct(nextProduct);
+      await loadCatalogPage({ reset: true, showErrorToast: false });
       renderProducts();
       showToast("Отзыв удалён.");
     } catch (error) {
@@ -1667,20 +1782,22 @@
       }
     }
 
-    var allProducts = store.getProducts();
-    var filteredProducts = getFilteredProducts(allProducts);
-    var visibleCount = Math.min(filteredProducts.length, Math.max(CATALOG_PAGE_SIZE, state.catalogVisibleCount));
-    var visibleProducts = filteredProducts.slice(0, visibleCount);
+    var visibleProducts = Array.isArray(state.catalogItems) ? state.catalogItems : [];
 
-    updateCatalogMeta(allProducts.length, filteredProducts.length, visibleCount);
-    updateCatalogLoadMoreButton(filteredProducts.length, visibleCount);
+    updateCatalogMeta();
+    updateCatalogLoadMoreButton();
 
-    if (!allProducts.length) {
+    if (!visibleProducts.length && state.catalogLoading) {
+      elements.adminProductsList.innerHTML = "<div class=\"empty-state\">Загрузка каталога...</div>";
+      return;
+    }
+
+    if (!visibleProducts.length && state.catalogTotalCount <= 0) {
       elements.adminProductsList.innerHTML = "<div class=\"empty-state\">Каталог пуст. Добавьте первый аромат.</div>";
       return;
     }
 
-    if (!filteredProducts.length) {
+    if (!visibleProducts.length && state.catalogSearchQuery) {
       elements.adminProductsList.innerHTML = "<div class=\"empty-state\">По запросу ничего не найдено.</div>";
       return;
     }

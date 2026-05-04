@@ -5,6 +5,8 @@
   var CART_KEY = "veligodsky_cart_v1";
   var SAMPLE_KEY = "veligodsky_sample_v1";
   var API_DATA_URL = "/api/store-data";
+  var API_ADMIN_CATALOG_URL = "/api/admin/catalog";
+  var API_ADMIN_PRODUCTS_URL = "/api/admin/products";
   var API_ADMIN_AUTH_URL = "/api/admin/auth";
   var API_ADMIN_PASSWORD_URL = "/api/admin/password";
   var API_ADMIN_SNAPSHOT_URL = "/api/admin/snapshot";
@@ -948,7 +950,23 @@
     return true;
   }
 
-  async function fetchRemoteData() {
+  function buildUrlWithQuery(baseUrl, query) {
+    var params = query && typeof query === "object" ? query : {};
+    var entries = Object.keys(params).filter(function (key) {
+      return params[key] !== undefined && params[key] !== null && params[key] !== "";
+    });
+    if (!entries.length) {
+      return baseUrl;
+    }
+    var encoded = entries.map(function (key) {
+      return encodeURIComponent(key) + "=" + encodeURIComponent(String(params[key]));
+    }).join("&");
+    return baseUrl + (baseUrl.indexOf("?") >= 0 ? "&" : "?") + encoded;
+  }
+
+  async function fetchRemoteData(options) {
+    var safeOptions = options && typeof options === "object" ? options : {};
+    var includeProducts = safeOptions.includeProducts !== false;
     var headers = {
       "Accept": "application/json"
     };
@@ -960,7 +978,11 @@
       headers["If-None-Match"] = remoteDataEtag;
     }
 
-    var response = await fetchWithTimeout(API_DATA_URL, {
+    var requestUrl = includeProducts
+      ? API_DATA_URL
+      : buildUrlWithQuery(API_DATA_URL, { products: 0 });
+
+    var response = await fetchWithTimeout(requestUrl, {
       method: "GET",
       cache: "no-cache",
       headers: headers
@@ -985,16 +1007,23 @@
     }
 
     var payload = await response.json();
-    return normalizeData(payload);
+    var normalized = normalizeData(payload);
+
+    if (!includeProducts) {
+      var currentData = loadData();
+      normalized.products = Array.isArray(currentData.products) ? currentData.products.slice() : [];
+    }
+
+    return normalized;
   }
 
-  async function fetchRemoteDataWithRetry() {
+  async function fetchRemoteDataWithRetry(options) {
     var attempts = Math.max(1, Math.round(Number(REMOTE_READ_RETRY_COUNT) || 1));
     var lastError = null;
 
     for (var attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        return await fetchRemoteData();
+        return await fetchRemoteData(options);
       } catch (error) {
         lastError = error;
         if (attempt >= attempts || !shouldRetryReadError(error)) {
@@ -1084,10 +1113,16 @@
     return true;
   }
 
-  async function init() {
+  async function init(options) {
+    var safeOptions = options && typeof options === "object" ? options : {};
+    var includeProducts = safeOptions.includeProducts !== false;
+    var skipRemote = Boolean(safeOptions.skipRemote);
     loadData();
 
     if (!canUseRemoteStore()) {
+      return loadData();
+    }
+    if (skipRemote) {
       return loadData();
     }
     if (hasPendingUnsyncedChanges()) {
@@ -1095,14 +1130,16 @@
     }
 
     try {
-      var remote = await fetchRemoteDataWithRetry();
+      var remote = await fetchRemoteDataWithRetry({ includeProducts: includeProducts });
       return saveData(remote);
     } catch (error) {
       return loadData();
     }
   }
 
-  async function syncFromServer() {
+  async function syncFromServer(options) {
+    var safeOptions = options && typeof options === "object" ? options : {};
+    var includeProducts = safeOptions.includeProducts !== false;
     if (!canUseRemoteStore()) {
       return loadData();
     }
@@ -1117,7 +1154,7 @@
           return loadData();
         }
 
-        var remote = await fetchRemoteDataWithRetry();
+        var remote = await fetchRemoteDataWithRetry({ includeProducts: includeProducts });
         return saveData(remote);
       })
       .finally(function () {
@@ -1181,6 +1218,199 @@
       expectedRemovedProducts: removedIds.length
     });
     return saved.products;
+  }
+
+  function upsertProductInLocalCache(product, options) {
+    var safeProduct = normalizeProduct(product);
+    if (!safeProduct) {
+      return null;
+    }
+
+    var safeOptions = options && typeof options === "object" ? options : {};
+    var preferTop = Boolean(safeOptions.prependIfMissing);
+    var data = loadData();
+    var products = Array.isArray(data.products) ? data.products.slice() : [];
+    var index = products.findIndex(function (item) {
+      return String(item && item.id || "") === String(safeProduct.id);
+    });
+
+    if (index >= 0) {
+      products[index] = safeProduct;
+    } else if (preferTop) {
+      products.unshift(safeProduct);
+    } else {
+      products.push(safeProduct);
+    }
+
+    data.products = products;
+    saveData(data);
+    return safeProduct;
+  }
+
+  function removeProductFromLocalCache(productId) {
+    var safeId = String(productId || "").trim();
+    if (!safeId) {
+      return false;
+    }
+
+    var data = loadData();
+    var products = Array.isArray(data.products) ? data.products : [];
+    var nextProducts = products.filter(function (item) {
+      return String(item && item.id || "") !== safeId;
+    });
+
+    if (nextProducts.length === products.length) {
+      return false;
+    }
+
+    data.products = nextProducts;
+    saveData(data);
+    return true;
+  }
+
+  async function fetchAdminCatalogPage(options) {
+    var safeOptions = options && typeof options === "object" ? options : {};
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var query = {
+      offset: Math.max(0, Math.round(Number(safeOptions.offset) || 0)),
+      limit: Math.max(1, Math.round(Number(safeOptions.limit) || 24)),
+      q: String(safeOptions.query || "").trim()
+    };
+    var requestUrl = buildUrlWithQuery(API_ADMIN_CATALOG_URL, query);
+
+    var response = await fetchWithTimeout(requestUrl, {
+      method: "GET",
+      cache: "no-cache",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_READ_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var payload = await response.json();
+    var items = Array.isArray(payload && payload.items)
+      ? payload.items.map(normalizeProduct).filter(Boolean)
+      : [];
+
+    items.forEach(function (item) {
+      upsertProductInLocalCache(item);
+    });
+
+    return {
+      total: Math.max(0, Math.round(Number(payload && payload.total) || 0)),
+      filteredTotal: Math.max(0, Math.round(Number(payload && payload.filteredTotal) || 0)),
+      offset: Math.max(0, Math.round(Number(payload && payload.offset) || 0)),
+      limit: Math.max(1, Math.round(Number(payload && payload.limit) || query.limit)),
+      hasMore: Boolean(payload && payload.hasMore),
+      nextOffset: Math.max(0, Math.round(Number(payload && payload.nextOffset) || (query.offset + items.length))),
+      items: items
+    };
+  }
+
+  async function upsertAdminProduct(product) {
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var normalizedProduct = normalizeProduct(product);
+    if (!normalizedProduct) {
+      throw new Error("INVALID_PRODUCT_PAYLOAD");
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_PRODUCTS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      },
+      body: JSON.stringify({ product: normalizedProduct })
+    }, REMOTE_WRITE_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+
+    if (!response.ok) {
+      var code = "";
+      try {
+        var payload = await response.json();
+        code = String(payload && payload.error || "").trim();
+      } catch (error) {
+        code = "";
+      }
+      throw new Error(code || ("HTTP " + response.status));
+    }
+
+    var result = await response.json();
+    var nextProduct = normalizeProduct(result && result.product);
+    if (!nextProduct) {
+      throw new Error("INVALID_SERVER_PAYLOAD");
+    }
+
+    upsertProductInLocalCache(nextProduct, {
+      prependIfMissing: Boolean(result && result.created)
+    });
+
+    return {
+      created: Boolean(result && result.created),
+      total: Math.max(0, Math.round(Number(result && result.total) || 0)),
+      product: nextProduct
+    };
+  }
+
+  async function deleteAdminProduct(productId) {
+    var safeProductId = String(productId || "").trim();
+    if (!safeProductId) {
+      throw new Error("INVALID_PRODUCT_ID");
+    }
+
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var endpoint = API_ADMIN_PRODUCTS_URL + "/" + encodeURIComponent(safeProductId);
+    var response = await fetchWithTimeout(endpoint, {
+      method: "DELETE",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_WRITE_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (response.status === 404) {
+      throw new Error("PRODUCT_NOT_FOUND");
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var result = await response.json();
+    removeProductFromLocalCache(safeProductId);
+
+    return {
+      id: safeProductId,
+      total: Math.max(0, Math.round(Number(result && result.total) || 0))
+    };
   }
 
   async function createAdminSnapshot(reason) {
@@ -1689,6 +1919,8 @@
     CART_KEY: CART_KEY,
     SAMPLE_KEY: SAMPLE_KEY,
     API_DATA_URL: API_DATA_URL,
+    API_ADMIN_CATALOG_URL: API_ADMIN_CATALOG_URL,
+    API_ADMIN_PRODUCTS_URL: API_ADMIN_PRODUCTS_URL,
     API_ADMIN_AUTH_URL: API_ADMIN_AUTH_URL,
     API_ADMIN_PASSWORD_URL: API_ADMIN_PASSWORD_URL,
     API_ADMIN_SNAPSHOT_URL: API_ADMIN_SNAPSHOT_URL,
@@ -1708,6 +1940,9 @@
     saveData: saveData,
     getProducts: getProducts,
     saveProducts: saveProducts,
+    fetchAdminCatalogPage: fetchAdminCatalogPage,
+    upsertAdminProduct: upsertAdminProduct,
+    deleteAdminProduct: deleteAdminProduct,
     getHomepageReviews: getHomepageReviews,
     getPendingHomepageReviews: getPendingHomepageReviews,
     saveHomepageReviews: saveHomepageReviews,

@@ -52,6 +52,8 @@ const STORE_HISTORY_MAX_ROWS = Math.max(20, Number(process.env.STORE_HISTORY_MAX
 const STORE_DELETE_INTENT_SAMPLE_LIMIT = Math.max(1, Number(process.env.STORE_DELETE_INTENT_SAMPLE_LIMIT || 8));
 const RESPONSE_COMPRESSION_MIN_BYTES = Math.max(512, Number(process.env.RESPONSE_COMPRESSION_MIN_BYTES || 1400));
 const RESPONSE_COMPRESSION_MAX_BYTES = Math.max(64 * 1024, Number(process.env.RESPONSE_COMPRESSION_MAX_BYTES || 4 * 1024 * 1024));
+const ADMIN_CATALOG_DEFAULT_LIMIT = Math.max(12, Number(process.env.ADMIN_CATALOG_DEFAULT_LIMIT || 24));
+const ADMIN_CATALOG_MAX_LIMIT = Math.max(ADMIN_CATALOG_DEFAULT_LIMIT, Number(process.env.ADMIN_CATALOG_MAX_LIMIT || 80));
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -1044,6 +1046,196 @@ function getProductsCount(data) {
   return data.products.length;
 }
 
+function shouldIncludeProductsInStoreResponse(requestUrl) {
+  if (!requestUrl || !requestUrl.searchParams) {
+    return true;
+  }
+  const raw = safeString(requestUrl.searchParams.get("products")).toLowerCase();
+  if (!raw) {
+    return true;
+  }
+  return !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
+}
+
+function normalizeCatalogSearchQuery(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeMlNumber(value) {
+  const normalized = Number(String(value || "").replace(",", "."));
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return null;
+  }
+  return Math.round(normalized * 100) / 100;
+}
+
+function sanitizeProductVolume(rawVolume) {
+  if (!rawVolume || typeof rawVolume !== "object") {
+    return null;
+  }
+
+  const ml = normalizeMlNumber(rawVolume.ml);
+  const price = Math.round(Number(rawVolume.price));
+  if (ml === null || !Number.isFinite(price) || price <= 0) {
+    return null;
+  }
+
+  return { ml, price };
+}
+
+function normalizeProductGender(value) {
+  const safe = safeString(value).toLowerCase();
+  if (safe === "male" || safe === "female" || safe === "unisex") {
+    return safe;
+  }
+  return "unisex";
+}
+
+function normalizeProductBottleType(value) {
+  const safe = safeString(value).toLowerCase();
+  if (safe === "decant" || safe === "tester" || safe === "full") {
+    return safe;
+  }
+  return "full";
+}
+
+function sanitizeIncomingAdminProduct(rawProduct, existingProduct) {
+  if (!rawProduct || typeof rawProduct !== "object") {
+    throw new Error("INVALID_PRODUCT_PAYLOAD");
+  }
+
+  const safeExisting = existingProduct && typeof existingProduct === "object" ? existingProduct : null;
+  const id = safeString(rawProduct.id || (safeExisting && safeExisting.id)).slice(0, 120);
+  const name = safeString(rawProduct.name).slice(0, 160);
+  const brand = safeString(rawProduct.brand).slice(0, 160);
+  const description = String(rawProduct.description || "").trim().slice(0, 6000);
+  const image = safeString(rawProduct.image).slice(0, 2 * 1024 * 1024);
+  const gender = normalizeProductGender(rawProduct.gender || (safeExisting && safeExisting.gender));
+  const bottleType = normalizeProductBottleType(rawProduct.bottleType || (safeExisting && safeExisting.bottleType));
+
+  if (!id || !name || !brand || !image) {
+    throw new Error("INVALID_PRODUCT_PAYLOAD");
+  }
+
+  const rawVolumes = Array.isArray(rawProduct.volumes) ? rawProduct.volumes : [];
+  const seenVolumes = new Set();
+  const volumes = rawVolumes
+    .map(sanitizeProductVolume)
+    .filter(Boolean)
+    .filter((volume) => {
+      const key = String(volume.ml);
+      if (seenVolumes.has(key)) {
+        return false;
+      }
+      seenVolumes.add(key);
+      return true;
+    })
+    .sort((left, right) => left.ml - right.ml);
+
+  if (!volumes.length) {
+    throw new Error("INVALID_PRODUCT_PAYLOAD");
+  }
+
+  const reviews = normalizeStoredReviewList(
+    rawProduct.reviews !== undefined ? rawProduct.reviews : (safeExisting && safeExisting.reviews),
+    "pr",
+    MAX_PRODUCT_REVIEWS_PER_PRODUCT
+  );
+  const pendingReviews = normalizeStoredReviewList(
+    rawProduct.pendingReviews !== undefined ? rawProduct.pendingReviews : (safeExisting && safeExisting.pendingReviews),
+    "ppr",
+    MAX_PENDING_PRODUCT_REVIEWS_PER_PRODUCT
+  );
+
+  return {
+    id,
+    name,
+    brand,
+    gender,
+    bottleType,
+    description,
+    image,
+    volumes,
+    reviews,
+    pendingReviews,
+    topWeek: Boolean(rawProduct.topWeek),
+    topMonth: Boolean(rawProduct.topMonth)
+  };
+}
+
+function buildAdminProductSearchIndex(product) {
+  const safeProduct = product && typeof product === "object" ? product : {};
+  const volumeIndex = (Array.isArray(safeProduct.volumes) ? safeProduct.volumes : [])
+    .map((volume) => {
+      const ml = normalizeMlNumber(volume && volume.ml);
+      const price = Math.round(Number(volume && volume.price));
+      if (ml === null || !Number.isFinite(price) || price <= 0) {
+        return "";
+      }
+      return String(ml) + "ml " + String(price);
+    })
+    .filter(Boolean)
+    .join(" ");
+
+  return normalizeCatalogSearchQuery([
+    safeProduct.name,
+    safeProduct.brand,
+    safeProduct.description,
+    safeProduct.gender === "male" ? "мужские male men"
+      : safeProduct.gender === "female" ? "женские female women"
+        : "унисекс unisex",
+    safeProduct.bottleType === "decant" ? "отливант decant"
+      : safeProduct.bottleType === "tester" ? "тестер tester"
+        : "полноценный флакон full bottle",
+    volumeIndex
+  ].join(" "));
+}
+
+function getAdminCatalogPage(data, options) {
+  const safeData = validateStoreData(data);
+  const safeOptions = options && typeof options === "object" ? options : {};
+  const normalizedQuery = normalizeCatalogSearchQuery(safeOptions.query);
+  const limit = clampInteger(safeOptions.limit, 1, ADMIN_CATALOG_MAX_LIMIT, ADMIN_CATALOG_DEFAULT_LIMIT);
+  const offset = clampInteger(safeOptions.offset, 0, Number.MAX_SAFE_INTEGER, 0);
+  const allProducts = Array.isArray(safeData.products) ? safeData.products : [];
+
+  const filteredProducts = normalizedQuery
+    ? allProducts.filter((product) => buildAdminProductSearchIndex(product).includes(normalizedQuery))
+    : allProducts.slice();
+
+  const pageItems = filteredProducts.slice(offset, offset + limit);
+  const hasMore = offset + pageItems.length < filteredProducts.length;
+
+  return {
+    total: allProducts.length,
+    filteredTotal: filteredProducts.length,
+    offset,
+    limit,
+    hasMore,
+    nextOffset: hasMore ? offset + pageItems.length : offset + pageItems.length,
+    items: pageItems
+  };
+}
+
+function parseAdminProductIdFromPath(pathname) {
+  const prefix = "/api/admin/products/";
+  if (!safeString(pathname).startsWith(prefix)) {
+    return "";
+  }
+  const rawPart = String(pathname || "").slice(prefix.length);
+  if (!rawPart || rawPart.includes("/")) {
+    return "";
+  }
+  try {
+    return safeString(decodeURIComponent(rawPart)).slice(0, 120);
+  } catch (error) {
+    return "";
+  }
+}
+
 function isIfMatchSatisfied(req, currentEtag) {
   const raw = req && req.headers ? req.headers["if-match"] : "";
   const header = Array.isArray(raw) ? raw.join(",") : String(raw || "");
@@ -1709,7 +1901,7 @@ function runSerializedStoreMutation(task) {
   return next;
 }
 
-async function handleStoreApi(req, res) {
+async function handleStoreApi(req, res, requestUrl) {
   if (!storeRepository) {
     sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
     return;
@@ -1717,7 +1909,12 @@ async function handleStoreApi(req, res) {
 
   if (req.method === "GET" || req.method === "HEAD") {
     const data = await storeRepository.read();
-    sendStoreDataResponse(req, res, 200, getStoreDataForRequest(req, data));
+    const includeProducts = shouldIncludeProductsInStoreResponse(requestUrl);
+    const responseData = getStoreDataForRequest(req, data);
+    if (!includeProducts) {
+      responseData.products = [];
+    }
+    sendStoreDataResponse(req, res, 200, responseData);
     return;
   }
 
@@ -1839,6 +2036,184 @@ async function handleStoreApi(req, res) {
   }
 
   sendText(res, 405, "Method Not Allowed");
+}
+
+async function handleAdminCatalogApi(req, res, requestUrl) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  const searchParams = requestUrl && requestUrl.searchParams ? requestUrl.searchParams : new URLSearchParams();
+  const offset = parseNonNegativeInteger(searchParams.get("offset"));
+  const limitRaw = parseNonNegativeInteger(searchParams.get("limit"));
+  const query = String(searchParams.get("q") || "").slice(0, 200);
+
+  const data = await storeRepository.read();
+  const page = getAdminCatalogPage(data, {
+    query,
+    offset: offset === null ? 0 : offset,
+    limit: limitRaw === null ? ADMIN_CATALOG_DEFAULT_LIMIT : limitRaw
+  });
+
+  sendJson(res, 200, {
+    ok: true,
+    total: page.total,
+    filteredTotal: page.filteredTotal,
+    offset: page.offset,
+    limit: page.limit,
+    hasMore: page.hasMore,
+    nextOffset: page.nextOffset,
+    items: page.items
+  });
+}
+
+async function handleAdminProductsApi(req, res) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  let raw;
+  let parsed;
+
+  try {
+    raw = await readRequestBody(req);
+  } catch (error) {
+    if (handleBodyReadFailure(res, error)) {
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    parsed = JSON.parse(raw || "{}");
+  } catch (error) {
+    sendJson(res, 400, { error: "INVALID_JSON" });
+    return;
+  }
+
+  try {
+    const result = await runSerializedStoreMutation(async () => {
+      const currentData = await storeRepository.read();
+      const nextData = cloneData(validateStoreData(currentData));
+      const incomingProduct = parsed && typeof parsed === "object" && parsed.product ? parsed.product : parsed;
+      const incomingId = safeString(incomingProduct && incomingProduct.id).slice(0, 120);
+      const productIndex = nextData.products.findIndex((product) => safeString(product && product.id) === incomingId);
+      const existingProduct = productIndex >= 0 ? nextData.products[productIndex] : null;
+      const nextProduct = sanitizeIncomingAdminProduct(incomingProduct, existingProduct);
+      const created = productIndex < 0;
+
+      if (created) {
+        nextData.products.unshift(nextProduct);
+      } else {
+        nextData.products[productIndex] = nextProduct;
+      }
+
+      await storeRepository.write(nextData, {
+        previousPayload: currentData,
+        source: created ? "admin_product_create" : "admin_product_update"
+      });
+
+      return {
+        created,
+        total: nextData.products.length,
+        product: nextProduct
+      };
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      created: result.created,
+      total: result.total,
+      product: result.product
+    });
+  } catch (error) {
+    if (error.message === "INVALID_PRODUCT_PAYLOAD") {
+      sendJson(res, 400, {
+        error: "INVALID_PRODUCT_PAYLOAD",
+        message: "Invalid product payload"
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
+async function handleAdminProductByIdApi(req, res, requestUrl) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "DELETE") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  const productId = parseAdminProductIdFromPath(requestUrl && requestUrl.pathname);
+  if (!productId) {
+    sendJson(res, 400, { error: "INVALID_PRODUCT_ID" });
+    return;
+  }
+
+  try {
+    const result = await runSerializedStoreMutation(async () => {
+      const currentData = await storeRepository.read();
+      const nextData = cloneData(validateStoreData(currentData));
+      const productIndex = nextData.products.findIndex((product) => safeString(product && product.id) === productId);
+      if (productIndex < 0) {
+        const notFoundError = new Error("PRODUCT_NOT_FOUND");
+        notFoundError.code = "PRODUCT_NOT_FOUND";
+        throw notFoundError;
+      }
+
+      nextData.products = nextData.products.filter((product) => safeString(product && product.id) !== productId);
+      await storeRepository.write(nextData, {
+        previousPayload: currentData,
+        source: "admin_product_delete"
+      });
+
+      return {
+        id: productId,
+        total: nextData.products.length
+      };
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      id: result.id,
+      total: result.total
+    });
+  } catch (error) {
+    if (error && error.code === "PRODUCT_NOT_FOUND") {
+      sendJson(res, 404, { error: "PRODUCT_NOT_FOUND" });
+      return;
+    }
+    throw error;
+  }
 }
 
 async function handleAdminAuthApi(req, res) {
@@ -2469,7 +2844,22 @@ async function requestHandler(req, res) {
     }
 
     if (requestUrl.pathname === "/api/store-data") {
-      await handleStoreApi(req, res);
+      await handleStoreApi(req, res, requestUrl);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/admin/catalog") {
+      await handleAdminCatalogApi(req, res, requestUrl);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/admin/products") {
+      await handleAdminProductsApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname.startsWith("/api/admin/products/")) {
+      await handleAdminProductByIdApi(req, res, requestUrl);
       return;
     }
 
