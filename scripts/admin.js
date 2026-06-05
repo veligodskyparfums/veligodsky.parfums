@@ -24,6 +24,7 @@
   var CAPACITY_CRITICAL_HEALTH_MS = 1800;
   var CAPACITY_CRITICAL_STORE_MS = 2600;
   var CATALOG_PAGE_SIZE = 24;
+  var CATALOG_PREFETCH_DELAY_MS = 650;
   var SEARCH_INPUT_DEBOUNCE_MS = 160;
 
   var state = {
@@ -40,6 +41,8 @@
     catalogHasMore: false,
     catalogNextOffset: 0,
     catalogLoading: false,
+    catalogBackgroundLoading: false,
+    catalogPrefetchTimer: null,
     catalogRequestId: 0,
     expandedProductReviews: {},
     capacityMonitor: {
@@ -1365,14 +1368,53 @@
       clearTimeout(state.catalogSearchDebounceTimer);
       state.catalogSearchDebounceTimer = null;
     }
+    clearCatalogPrefetchTimer();
     state.catalogItems = [];
     state.catalogTotalCount = 0;
     state.catalogFilteredCount = 0;
     state.catalogHasMore = false;
     state.catalogNextOffset = 0;
     state.catalogLoading = false;
+    state.catalogBackgroundLoading = false;
     state.catalogRequestId += 1;
     state.expandedProductReviews = {};
+  }
+
+  function clearCatalogPrefetchTimer() {
+    if (!state.catalogPrefetchTimer) {
+      return;
+    }
+    clearTimeout(state.catalogPrefetchTimer);
+    state.catalogPrefetchTimer = null;
+  }
+
+  function shouldAutoPrefetchCatalog() {
+    if (state.catalogSearchQuery) {
+      return false;
+    }
+    if (!state.catalogHasMore) {
+      return false;
+    }
+    if (state.catalogLoading || state.catalogBackgroundLoading) {
+      return false;
+    }
+    return true;
+  }
+
+  function scheduleCatalogPrefetch() {
+    clearCatalogPrefetchTimer();
+    if (!shouldAutoPrefetchCatalog()) {
+      return;
+    }
+
+    state.catalogPrefetchTimer = setTimeout(function () {
+      state.catalogPrefetchTimer = null;
+      loadCatalogPage({
+        reset: false,
+        showErrorToast: false,
+        background: true
+      });
+    }, CATALOG_PREFETCH_DELAY_MS);
   }
 
   function updateCatalogMeta() {
@@ -1395,11 +1437,15 @@
     }
 
     if (!state.catalogSearchQuery) {
-      elements.adminCatalogMeta.textContent = "Показано " + shown + " из " + totalCount + " товаров";
+      elements.adminCatalogMeta.textContent = state.catalogBackgroundLoading
+        ? "Загружено " + shown + " из " + totalCount + " товаров. Остальные подгружаются..."
+        : "Загружено " + shown + " из " + totalCount + " товаров";
       return;
     }
 
-    elements.adminCatalogMeta.textContent = "Найдено " + filteredCount + " из " + totalCount + " товаров. Показано " + shown + ".";
+    elements.adminCatalogMeta.textContent = state.catalogBackgroundLoading
+      ? "Найдено " + filteredCount + " из " + totalCount + " товаров. Уже загружено " + shown + ", продолжаем подгрузку..."
+      : "Найдено " + filteredCount + " из " + totalCount + " товаров. Загружено " + shown + ".";
   }
 
   function updateCatalogLoadMoreButton() {
@@ -1409,13 +1455,14 @@
 
     var shown = Array.isArray(state.catalogItems) ? state.catalogItems.length : 0;
     var remaining = Math.max(0, Math.round(Number(state.catalogFilteredCount) || 0) - shown);
+    var isBusy = state.catalogLoading || state.catalogBackgroundLoading;
 
     if (state.catalogHasMore && remaining > 0) {
       elements.adminCatalogLoadMoreBtn.classList.remove("hidden");
-      elements.adminCatalogLoadMoreBtn.textContent = state.catalogLoading
+      elements.adminCatalogLoadMoreBtn.textContent = isBusy
         ? "Загрузка..."
         : "Показать ещё (" + remaining + ")";
-      elements.adminCatalogLoadMoreBtn.disabled = state.catalogLoading;
+      elements.adminCatalogLoadMoreBtn.disabled = isBusy;
       return;
     }
 
@@ -1446,6 +1493,7 @@
     var safeOptions = options && typeof options === "object" ? options : {};
     var shouldReset = Boolean(safeOptions.reset);
     var showErrorToast = safeOptions.showErrorToast !== false;
+    var isBackground = Boolean(safeOptions.background);
 
     if (typeof store.fetchAdminCatalogPage !== "function") {
       var fallbackProducts = typeof store.getProducts === "function" ? store.getProducts() : [];
@@ -1455,11 +1503,13 @@
       state.catalogHasMore = state.catalogTotalCount > state.catalogItems.length;
       state.catalogNextOffset = state.catalogItems.length;
       state.catalogLoading = false;
+      state.catalogBackgroundLoading = false;
       renderProducts();
       return;
     }
 
     if (shouldReset) {
+      clearCatalogPrefetchTimer();
       state.catalogItems = [];
       state.catalogHasMore = false;
       state.catalogNextOffset = 0;
@@ -1469,7 +1519,11 @@
     var requestOffset = shouldReset ? 0 : Math.max(0, Math.round(Number(state.catalogNextOffset) || 0));
     var requestId = state.catalogRequestId + 1;
     state.catalogRequestId = requestId;
-    state.catalogLoading = true;
+    if (isBackground) {
+      state.catalogBackgroundLoading = true;
+    } else {
+      state.catalogLoading = true;
+    }
     renderProducts();
 
     try {
@@ -1522,7 +1576,9 @@
     } finally {
       if (requestId === state.catalogRequestId) {
         state.catalogLoading = false;
+        state.catalogBackgroundLoading = false;
         renderProducts();
+        scheduleCatalogPrefetch();
       }
     }
   }
