@@ -5,6 +5,7 @@
   var CART_KEY = "veligodsky_cart_v1";
   var SAMPLE_KEY = "veligodsky_sample_v1";
   var API_DATA_URL = "/api/store-data";
+  var API_PUBLIC_CATALOG_URL = "/api/catalog";
   var API_ADMIN_CATALOG_URL = "/api/admin/catalog";
   var API_ADMIN_PRODUCTS_URL = "/api/admin/products";
   var API_ADMIN_AUTH_URL = "/api/admin/auth";
@@ -574,6 +575,27 @@
       description = "";
     }
 
+    var normalizedReviews = normalizeReviewList(product.reviews, {
+      prefix: "pr",
+      maxItems: 80,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+    var normalizedPendingReviews = normalizeReviewList(product.pendingReviews, {
+      prefix: "ppr",
+      maxItems: 120,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+    var reviewsCount = Math.max(
+      normalizedReviews.length,
+      Math.max(0, Math.round(toNumber(product.reviewsCount, normalizedReviews.length)))
+    );
+    var pendingReviewsCount = Math.max(
+      normalizedPendingReviews.length,
+      Math.max(0, Math.round(toNumber(product.pendingReviewsCount, normalizedPendingReviews.length)))
+    );
+
     return {
       id: String(product.id || uid("p")),
       name: name,
@@ -583,18 +605,13 @@
       description: description,
       image: pickImage(product.image, idx),
       volumes: normalizedVolumes,
-      reviews: normalizeReviewList(product.reviews, {
-        prefix: "pr",
-        maxItems: 80,
-        maxTextLength: 500,
-        sortByCreatedAtDesc: true
-      }),
-      pendingReviews: normalizeReviewList(product.pendingReviews, {
-        prefix: "ppr",
-        maxItems: 120,
-        maxTextLength: 500,
-        sortByCreatedAtDesc: true
-      }),
+      reviews: normalizedReviews,
+      pendingReviews: normalizedPendingReviews,
+      reviewsCount: reviewsCount,
+      pendingReviewsCount: pendingReviewsCount,
+      reviewsLoaded: product.reviewsLoaded === false ? false : true,
+      pendingReviewsLoaded: product.pendingReviewsLoaded === false ? false : true,
+      detailsLoaded: product.detailsLoaded === false ? false : true,
       topWeek: Boolean(product.topWeek),
       topMonth: Boolean(product.topMonth)
     };
@@ -1319,6 +1336,109 @@
     };
   }
 
+  async function fetchPublicCatalog() {
+    var response = await fetchWithTimeout(API_PUBLIC_CATALOG_URL, {
+      method: "GET",
+      cache: "no-cache",
+      headers: {
+        "Accept": "application/json"
+      }
+    }, REMOTE_READ_TIMEOUT_MS);
+
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var payload = await response.json();
+    var items = Array.isArray(payload && payload.items)
+      ? payload.items.map(normalizeProduct).filter(Boolean)
+      : [];
+
+    var data = loadData();
+    data.products = items;
+    saveData(data);
+    return items;
+  }
+
+  async function fetchAdminProductById(productId) {
+    var safeProductId = String(productId || "").trim();
+    if (!safeProductId) {
+      throw new Error("INVALID_PRODUCT_ID");
+    }
+
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var endpoint = API_ADMIN_PRODUCTS_URL + "/" + encodeURIComponent(safeProductId);
+    var response = await fetchWithTimeout(endpoint, {
+      method: "GET",
+      cache: "no-cache",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_READ_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (response.status === 404) {
+      throw new Error("PRODUCT_NOT_FOUND");
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var payload = await response.json();
+    var product = normalizeProduct(payload && payload.product);
+    if (!product) {
+      throw new Error("INVALID_SERVER_PAYLOAD");
+    }
+
+    upsertProductInLocalCache(product);
+    return product;
+  }
+
+  async function fetchProductReviews(productId) {
+    var safeProductId = String(productId || "").trim();
+    if (!safeProductId) {
+      throw new Error("PRODUCT_ID_REQUIRED");
+    }
+
+    var requestUrl = buildUrlWithQuery(API_PRODUCT_REVIEWS_URL, {
+      productId: safeProductId
+    });
+
+    var response = await fetchWithTimeout(requestUrl, {
+      method: "GET",
+      cache: "no-cache",
+      headers: {
+        "Accept": "application/json"
+      }
+    }, REVIEW_TIMEOUT_MS);
+
+    if (response.status === 404) {
+      throw new Error("PRODUCT_NOT_FOUND");
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var payload = await response.json();
+    var reviews = normalizeReviewList(payload && payload.reviews, {
+      prefix: "pr",
+      maxItems: 80,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+
+    applyProductReviewsCache(safeProductId, reviews);
+    return reviews;
+  }
+
   async function upsertAdminProduct(product) {
     var adminToken = getStoredAdminToken();
     if (!adminToken) {
@@ -1521,7 +1641,9 @@
         return product;
       }
       return Object.assign({}, product, {
-        reviews: nextReviews
+        reviews: nextReviews,
+        reviewsCount: nextReviews.length,
+        reviewsLoaded: true
       });
     });
     saveData(data);
@@ -1919,6 +2041,7 @@
     CART_KEY: CART_KEY,
     SAMPLE_KEY: SAMPLE_KEY,
     API_DATA_URL: API_DATA_URL,
+    API_PUBLIC_CATALOG_URL: API_PUBLIC_CATALOG_URL,
     API_ADMIN_CATALOG_URL: API_ADMIN_CATALOG_URL,
     API_ADMIN_PRODUCTS_URL: API_ADMIN_PRODUCTS_URL,
     API_ADMIN_AUTH_URL: API_ADMIN_AUTH_URL,
@@ -1940,7 +2063,9 @@
     saveData: saveData,
     getProducts: getProducts,
     saveProducts: saveProducts,
+    fetchPublicCatalog: fetchPublicCatalog,
     fetchAdminCatalogPage: fetchAdminCatalogPage,
+    fetchAdminProductById: fetchAdminProductById,
     upsertAdminProduct: upsertAdminProduct,
     deleteAdminProduct: deleteAdminProduct,
     getHomepageReviews: getHomepageReviews,
@@ -1948,6 +2073,7 @@
     saveHomepageReviews: saveHomepageReviews,
     savePendingHomepageReviews: savePendingHomepageReviews,
     fetchReviewCaptcha: fetchReviewCaptcha,
+    fetchProductReviews: fetchProductReviews,
     submitHomepageReview: submitHomepageReview,
     submitProductReview: submitProductReview,
     getSettings: getSettings,

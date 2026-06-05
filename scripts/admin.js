@@ -1098,8 +1098,20 @@
     }
   }
 
-  function startEdit(productId) {
-    var product = getProductById(productId);
+  async function startEdit(productId) {
+    var product = null;
+
+    try {
+      product = await ensureProductDetails(productId);
+    } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      showToast("Не удалось загрузить товар для редактирования.", true);
+      return;
+    }
 
     if (!product) {
       return;
@@ -1246,7 +1258,14 @@
     var id = toggle.dataset.id;
     var mode = toggle.dataset.toggle;
     var checked = Boolean(toggle.checked);
-    var product = getProductById(id);
+    var product = null;
+    try {
+      product = await ensureProductDetails(id);
+    } catch (error) {
+      toggle.checked = !checked;
+      showToast("Не удалось загрузить полные данные товара.", true);
+      return;
+    }
     if (!product) {
       toggle.checked = !checked;
       showToast("Товар не найден. Обновите каталог.", true);
@@ -1489,6 +1508,36 @@
     }) || null;
   }
 
+  function replaceCatalogProduct(nextProduct) {
+    var safeProduct = nextProduct && typeof nextProduct === "object" ? nextProduct : null;
+    var safeId = String(safeProduct && safeProduct.id || "").trim();
+    if (!safeId) {
+      return;
+    }
+
+    state.catalogItems = (Array.isArray(state.catalogItems) ? state.catalogItems : []).map(function (item) {
+      if (String(item && item.id) !== safeId) {
+        return item;
+      }
+      return Object.assign({}, item, safeProduct);
+    });
+  }
+
+  async function ensureProductDetails(productId) {
+    var current = getProductById(productId);
+    if (current && current.detailsLoaded !== false) {
+      return current;
+    }
+
+    if (typeof store.fetchAdminProductById !== "function") {
+      return current;
+    }
+
+    var fullProduct = await store.fetchAdminProductById(productId);
+    replaceCatalogProduct(fullProduct);
+    return fullProduct;
+  }
+
   async function loadCatalogPage(options) {
     var safeOptions = options && typeof options === "object" ? options : {};
     var shouldReset = Boolean(safeOptions.reset);
@@ -1583,7 +1632,7 @@
     }
   }
 
-  function toggleProductReviews(productId) {
+  async function toggleProductReviews(productId) {
     var safeProductId = String(productId || "").trim();
     if (!safeProductId) {
       return;
@@ -1609,7 +1658,13 @@
       return;
     }
 
-    var product = getProductById(safeProductId);
+    var product = null;
+    try {
+      product = await ensureProductDetails(safeProductId);
+    } catch (error) {
+      showToast("Не удалось загрузить отзывы товара.", true);
+      return;
+    }
     if (!product) {
       return;
     }
@@ -1642,6 +1697,13 @@
   }
 
   async function approvePendingProductReview(productId, reviewId) {
+    try {
+      await ensureProductDetails(productId);
+    } catch (error) {
+      showToast("Не удалось загрузить отзывы товара.", true);
+      return;
+    }
+
     var entry = findPendingProductReviewEntry(productId, reviewId);
     if (!entry) {
       showToast("Отзыв на модерации не найден.", true);
@@ -1678,6 +1740,13 @@
   }
 
   async function rejectPendingProductReview(productId, reviewId) {
+    try {
+      await ensureProductDetails(productId);
+    } catch (error) {
+      showToast("Не удалось загрузить отзывы товара.", true);
+      return;
+    }
+
     var entry = findPendingProductReviewEntry(productId, reviewId);
     if (!entry) {
       showToast("Отзыв на модерации не найден.", true);
@@ -1713,6 +1782,13 @@
   }
 
   async function editProductReview(productId, reviewId) {
+    try {
+      await ensureProductDetails(productId);
+    } catch (error) {
+      showToast("Не удалось загрузить отзывы товара.", true);
+      return;
+    }
+
     var entry = findProductReviewEntry(productId, reviewId);
     if (!entry) {
       showToast("Отзыв не найден.", true);
@@ -1793,6 +1869,13 @@
   }
 
   async function deleteProductReview(productId, reviewId) {
+    try {
+      await ensureProductDetails(productId);
+    } catch (error) {
+      showToast("Не удалось загрузить отзывы товара.", true);
+      return;
+    }
+
     var entry = findProductReviewEntry(productId, reviewId);
     if (!entry) {
       showToast("Отзыв не найден.", true);
@@ -1875,8 +1958,14 @@
       return formatMlValue(volume.ml) + "ml - " + store.formatPrice(volume.price);
     }).join(" | ");
 
-    var productReviews = Array.isArray(product.reviews) ? product.reviews : [];
-    var pendingProductReviews = Array.isArray(product.pendingReviews) ? product.pendingReviews : [];
+    var productReviewsCount = Math.max(
+      Array.isArray(product.reviews) ? product.reviews.length : 0,
+      Math.max(0, Math.round(Number(product.reviewsCount) || 0))
+    );
+    var pendingProductReviewsCount = Math.max(
+      Array.isArray(product.pendingReviews) ? product.pendingReviews.length : 0,
+      Math.max(0, Math.round(Number(product.pendingReviewsCount) || 0))
+    );
     var productId = String(product.id || "");
 
     return ""
@@ -1899,7 +1988,7 @@
       + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"month\" data-id=\"" + escapeHtml(productId) + "\" " + (product.topMonth ? "checked" : "") + ">Топ месяца</label>"
       + "    </div>"
       + "    <div class=\"admin-product-review-summary\">"
-      + "      <span>Отзывы: " + productReviews.length + " • На модерации: " + pendingProductReviews.length + "</span>"
+      + "      <span>Отзывы: " + productReviewsCount + " • На модерации: " + pendingProductReviewsCount + "</span>"
       + "      <button class=\"btn btn-ghost\" type=\"button\" data-action=\"toggle-reviews\" data-id=\"" + escapeHtml(productId) + "\">Показать отзывы</button>"
       + "    </div>"
       + "    <div class=\"admin-product-reviews\" data-product-reviews-panel hidden></div>"

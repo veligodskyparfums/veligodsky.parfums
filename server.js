@@ -369,14 +369,39 @@ function getStaticCacheControl(filePath) {
 }
 
 function sendStoreDataResponse(req, res, statusCode, payload) {
+  sendJsonWithEtag(req, res, statusCode, payload, {
+    cacheControl: "private, max-age=0, must-revalidate",
+    vary: "Authorization"
+  });
+}
+
+function sendPublicApiResponse(req, res, statusCode, payload, options) {
+  const safeOptions = options && typeof options === "object" ? options : {};
+  const maxAge = Math.max(0, Math.round(Number(safeOptions.maxAge) || 30));
+  const staleWhileRevalidate = Math.max(0, Math.round(Number(safeOptions.staleWhileRevalidate) || 120));
+  const cacheControl = staleWhileRevalidate > 0
+    ? "public, max-age=" + maxAge + ", stale-while-revalidate=" + staleWhileRevalidate
+    : "public, max-age=" + maxAge;
+
+  sendJsonWithEtag(req, res, statusCode, payload, {
+    cacheControl
+  });
+}
+
+function sendJsonWithEtag(req, res, statusCode, payload, options) {
+  const safeOptions = options && typeof options === "object" ? options : {};
   const body = JSON.stringify(payload);
   const etag = buildWeakEtagFromString(body);
   const baseHeaders = {
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "private, max-age=0, must-revalidate",
-    "ETag": etag,
-    "Vary": "Authorization"
+    "Cache-Control": safeString(safeOptions.cacheControl) || "no-store",
+    "ETag": etag
   };
+  const varyHeader = safeString(safeOptions.vary);
+
+  if (varyHeader) {
+    baseHeaders.Vary = varyHeader;
+  }
 
   if (statusCode === 200 && (req.method === "GET" || req.method === "HEAD") && isEtagMatch(req, etag)) {
     res.writeHead(304, baseHeaders);
@@ -989,31 +1014,93 @@ function sanitizePublicStoreData(data) {
   }
   delete safe.pendingHomepageReviews;
   if (Array.isArray(safe.reviews)) {
-    safe.reviews = safe.reviews.map((review) => {
-      const nextReview = Object.assign({}, review);
-      delete nextReview.consentProof;
-      delete nextReview.consent;
-      delete nextReview.termsProof;
-      delete nextReview.terms;
-      return nextReview;
-    });
+    safe.reviews = safe.reviews.map((review) => sanitizePublicReviewEntry(review));
   }
   safe.products = safe.products.map((product) => {
     const next = Object.assign({}, product);
     delete next.pendingReviews;
     if (Array.isArray(next.reviews)) {
-      next.reviews = next.reviews.map((review) => {
-        const nextReview = Object.assign({}, review);
-        delete nextReview.consentProof;
-        delete nextReview.consent;
-        delete nextReview.termsProof;
-        delete nextReview.terms;
-        return nextReview;
-      });
+      next.reviews = next.reviews.map((review) => sanitizePublicReviewEntry(review));
     }
     return next;
   });
   return safe;
+}
+
+function buildProductImageApiPath(productId) {
+  const safeId = safeString(productId).slice(0, 120);
+  if (!safeId) {
+    return "";
+  }
+  return "/api/product-image/" + encodeURIComponent(safeId);
+}
+
+function getProductPublishedReviewsCount(product) {
+  return Array.isArray(product && product.reviews) ? product.reviews.length : 0;
+}
+
+function getProductPendingReviewsCount(product) {
+  return Array.isArray(product && product.pendingReviews) ? product.pendingReviews.length : 0;
+}
+
+function getProductPreviewImageUrl(product) {
+  const safeProduct = product && typeof product === "object" ? product : {};
+  const image = safeString(safeProduct.image);
+  if (/^https?:\/\//i.test(image)) {
+    return image;
+  }
+  return buildProductImageApiPath(safeProduct.id);
+}
+
+function buildPublicCatalogProductSummary(product) {
+  const safeProduct = product && typeof product === "object" ? product : {};
+  return {
+    id: safeString(safeProduct.id).slice(0, 120),
+    name: safeString(safeProduct.name).slice(0, 160),
+    brand: safeString(safeProduct.brand).slice(0, 160),
+    gender: normalizeProductGender(safeProduct.gender),
+    bottleType: normalizeProductBottleType(safeProduct.bottleType),
+    description: String(safeProduct.description || "").trim().slice(0, 6000),
+    image: getProductPreviewImageUrl(safeProduct),
+    volumes: Array.isArray(safeProduct.volumes)
+      ? safeProduct.volumes.map(sanitizeProductVolume).filter(Boolean)
+      : [],
+    reviewsCount: getProductPublishedReviewsCount(safeProduct),
+    reviewsLoaded: false,
+    topWeek: Boolean(safeProduct.topWeek),
+    topMonth: Boolean(safeProduct.topMonth)
+  };
+}
+
+function buildAdminCatalogProductSummary(product) {
+  const safeProduct = product && typeof product === "object" ? product : {};
+  return {
+    id: safeString(safeProduct.id).slice(0, 120),
+    name: safeString(safeProduct.name).slice(0, 160),
+    brand: safeString(safeProduct.brand).slice(0, 160),
+    gender: normalizeProductGender(safeProduct.gender),
+    bottleType: normalizeProductBottleType(safeProduct.bottleType),
+    image: getProductPreviewImageUrl(safeProduct),
+    volumes: Array.isArray(safeProduct.volumes)
+      ? safeProduct.volumes.map(sanitizeProductVolume).filter(Boolean)
+      : [],
+    reviewsCount: getProductPublishedReviewsCount(safeProduct),
+    pendingReviewsCount: getProductPendingReviewsCount(safeProduct),
+    reviewsLoaded: false,
+    pendingReviewsLoaded: false,
+    detailsLoaded: false,
+    topWeek: Boolean(safeProduct.topWeek),
+    topMonth: Boolean(safeProduct.topMonth)
+  };
+}
+
+function sanitizePublicReviewEntry(review) {
+  const nextReview = Object.assign({}, review);
+  delete nextReview.consentProof;
+  delete nextReview.consent;
+  delete nextReview.termsProof;
+  delete nextReview.terms;
+  return nextReview;
 }
 
 function sanitizeAdminStoreData(data) {
@@ -1206,7 +1293,9 @@ function getAdminCatalogPage(data, options) {
     ? allProducts.filter((product) => buildAdminProductSearchIndex(product).includes(normalizedQuery))
     : allProducts.slice();
 
-  const pageItems = filteredProducts.slice(offset, offset + limit);
+  const pageItems = filteredProducts
+    .slice(offset, offset + limit)
+    .map((product) => buildAdminCatalogProductSummary(product));
   const hasMore = offset + pageItems.length < filteredProducts.length;
 
   return {
@@ -1222,6 +1311,22 @@ function getAdminCatalogPage(data, options) {
 
 function parseAdminProductIdFromPath(pathname) {
   const prefix = "/api/admin/products/";
+  if (!safeString(pathname).startsWith(prefix)) {
+    return "";
+  }
+  const rawPart = String(pathname || "").slice(prefix.length);
+  if (!rawPart || rawPart.includes("/")) {
+    return "";
+  }
+  try {
+    return safeString(decodeURIComponent(rawPart)).slice(0, 120);
+  } catch (error) {
+    return "";
+  }
+}
+
+function parsePublicProductIdFromPath(pathname) {
+  const prefix = "/api/product-image/";
   if (!safeString(pathname).startsWith(prefix)) {
     return "";
   }
@@ -2038,6 +2143,115 @@ async function handleStoreApi(req, res, requestUrl) {
   sendText(res, 405, "Method Not Allowed");
 }
 
+async function handlePublicCatalogApi(req, res) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  const data = await storeRepository.read();
+  const safeData = sanitizePublicStoreData(data);
+  const items = Array.isArray(safeData.products)
+    ? safeData.products.map((product) => buildPublicCatalogProductSummary(product))
+    : [];
+
+  sendPublicApiResponse(req, res, 200, {
+    ok: true,
+    total: items.length,
+    items
+  }, {
+    maxAge: 30,
+    staleWhileRevalidate: 180
+  });
+}
+
+async function handleProductImageApi(req, res, requestUrl) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  const productId = parsePublicProductIdFromPath(requestUrl && requestUrl.pathname);
+  if (!productId) {
+    sendJson(res, 400, { error: "INVALID_PRODUCT_ID" });
+    return;
+  }
+
+  const data = await storeRepository.read();
+  const safeData = validateStoreData(data);
+  const product = Array.isArray(safeData.products)
+    ? safeData.products.find((item) => safeString(item && item.id) === productId)
+    : null;
+
+  if (!product) {
+    sendText(res, 404, "Not Found");
+    return;
+  }
+
+  const imageValue = safeString(product.image);
+  if (!imageValue) {
+    sendText(res, 404, "Not Found");
+    return;
+  }
+
+  if (/^https?:\/\//i.test(imageValue)) {
+    res.writeHead(302, {
+      "Location": imageValue,
+      "Cache-Control": "public, max-age=3600"
+    });
+    res.end();
+    return;
+  }
+
+  const dataUrlMatch = imageValue.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i);
+  if (!dataUrlMatch) {
+    sendText(res, 404, "Not Found");
+    return;
+  }
+
+  const contentType = safeString(dataUrlMatch[1]).toLowerCase() || "image/jpeg";
+  const base64Payload = dataUrlMatch[2] || "";
+  const body = Buffer.from(base64Payload, "base64");
+  const etag = buildWeakEtagFromString(imageValue);
+
+  if ((req.method === "GET" || req.method === "HEAD") && isEtagMatch(req, etag)) {
+    res.writeHead(304, {
+      "ETag": etag,
+      "Cache-Control": "public, max-age=3600, must-revalidate",
+      "Content-Type": contentType
+    });
+    res.end();
+    return;
+  }
+
+  if (req.method === "HEAD") {
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Content-Length": body.length,
+      "Cache-Control": "public, max-age=3600, must-revalidate",
+      "ETag": etag
+    });
+    res.end();
+    return;
+  }
+
+  writeBufferedResponse(res, 200, {
+    "Content-Type": contentType,
+    "Cache-Control": "public, max-age=3600, must-revalidate",
+    "ETag": etag
+  }, body);
+}
+
 async function handleAdminCatalogApi(req, res, requestUrl) {
   if (!storeRepository) {
     sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
@@ -2164,7 +2378,7 @@ async function handleAdminProductByIdApi(req, res, requestUrl) {
     return;
   }
 
-  if (req.method !== "DELETE") {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "DELETE") {
     sendText(res, 405, "Method Not Allowed");
     return;
   }
@@ -2176,6 +2390,25 @@ async function handleAdminProductByIdApi(req, res, requestUrl) {
   const productId = parseAdminProductIdFromPath(requestUrl && requestUrl.pathname);
   if (!productId) {
     sendJson(res, 400, { error: "INVALID_PRODUCT_ID" });
+    return;
+  }
+
+  if (req.method === "GET" || req.method === "HEAD") {
+    const currentData = await storeRepository.read();
+    const safeData = validateStoreData(currentData);
+    const product = Array.isArray(safeData.products)
+      ? safeData.products.find((item) => safeString(item && item.id) === productId)
+      : null;
+
+    if (!product) {
+      sendJson(res, 404, { error: "PRODUCT_NOT_FOUND" });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      product
+    });
     return;
   }
 
@@ -2439,6 +2672,42 @@ async function handleAdminSnapshotApi(req, res) {
 async function handleProductReviewsApi(req, res) {
   if (!storeRepository) {
     sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method === "GET" || req.method === "HEAD") {
+    const hostHeader = req.headers.host || "localhost:" + PORT;
+    const requestUrl = new URL(req.url, "http://" + hostHeader);
+    const productId = safeString(requestUrl.searchParams.get("productId")).slice(0, 120);
+    if (!productId) {
+      sendJson(res, 400, { error: "PRODUCT_ID_REQUIRED" });
+      return;
+    }
+
+    const currentData = await storeRepository.read();
+    const safeData = sanitizePublicStoreData(currentData);
+    const product = Array.isArray(safeData.products)
+      ? safeData.products.find((item) => safeString(item && item.id) === productId)
+      : null;
+
+    if (!product) {
+      sendJson(res, 404, { error: "PRODUCT_NOT_FOUND" });
+      return;
+    }
+
+    const reviews = Array.isArray(product.reviews)
+      ? product.reviews.map((review) => sanitizePublicReviewEntry(review))
+      : [];
+
+    sendPublicApiResponse(req, res, 200, {
+      ok: true,
+      productId,
+      total: reviews.length,
+      reviews
+    }, {
+      maxAge: 30,
+      staleWhileRevalidate: 120
+    });
     return;
   }
 
@@ -2845,6 +3114,16 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/store-data") {
       await handleStoreApi(req, res, requestUrl);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/catalog") {
+      await handlePublicCatalogApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname.startsWith("/api/product-image/")) {
+      await handleProductImageApi(req, res, requestUrl);
       return;
     }
 

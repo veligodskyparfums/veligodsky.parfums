@@ -79,7 +79,7 @@
     cacheElements();
     decorateTelegramButtons();
     if (typeof store.init === "function") {
-      await store.init();
+      await store.init({ skipRemote: true });
     }
     state.products = store.getProducts();
     state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
@@ -87,6 +87,10 @@
 
     runPrimaryStartupTasks();
     scheduleSecondaryStartupTasks();
+
+    refreshFromServer(false).catch(function () {
+      // Silent background refresh failure keeps the cached catalog visible.
+    });
   }
 
   function isCompactViewport() {
@@ -452,7 +456,10 @@
     var syncSucceeded = typeof store.syncFromServer !== "function";
     if (typeof store.syncFromServer === "function") {
       try {
-        await store.syncFromServer();
+        await store.syncFromServer({ includeProducts: false });
+        if (typeof store.fetchPublicCatalog === "function") {
+          await store.fetchPublicCatalog();
+        }
         syncSucceeded = true;
       } catch (error) {
         syncSucceeded = false;
@@ -1360,6 +1367,12 @@
     });
   }
 
+  function getProductReviewsCount(product) {
+    var fromArray = Array.isArray(product && product.reviews) ? product.reviews.length : 0;
+    var fromField = Math.max(0, Math.round(Number(product && product.reviewsCount) || 0));
+    return Math.max(fromArray, fromField);
+  }
+
   function buildProductReviewsContent(product) {
     var reviews = Array.isArray(product.reviews) ? product.reviews : [];
     var reviewsHtml = "";
@@ -1460,6 +1473,41 @@
       return;
     }
 
+    if (product.reviewsLoaded === false && typeof store.fetchProductReviews === "function") {
+      section.setAttribute("data-product-reviews-lazy", "loading");
+      content.innerHTML = "<div class=\"empty-state\">Загружаем отзывы...</div>";
+
+      store.fetchProductReviews(productId)
+        .then(function (reviews) {
+          var nextProduct = (Array.isArray(state.products) ? state.products : []).find(function (item) {
+            return String(item && item.id) === productId;
+          });
+          if (nextProduct) {
+            nextProduct.reviews = Array.isArray(reviews) ? reviews.slice() : [];
+            nextProduct.reviewsCount = nextProduct.reviews.length;
+            nextProduct.reviewsLoaded = true;
+          }
+          if (!document.body.contains(section)) {
+            return;
+          }
+          content.innerHTML = buildProductReviewsContent(nextProduct || product);
+          section.setAttribute("data-product-reviews-lazy", "0");
+          restoreProductReviewDrafts();
+          var form = content.querySelector("[data-product-review-form]");
+          if (form) {
+            ensureReviewCaptcha(form);
+          }
+        })
+        .catch(function () {
+          if (!document.body.contains(section)) {
+            return;
+          }
+          section.setAttribute("data-product-reviews-lazy", "1");
+          content.innerHTML = "<div class=\"empty-state\">Не удалось загрузить отзывы. Нажмите «Развернуть» ещё раз.</div>";
+        });
+      return;
+    }
+
     content.innerHTML = buildProductReviewsContent(product);
     section.setAttribute("data-product-reviews-lazy", "0");
     restoreProductReviewDrafts();
@@ -1471,16 +1519,18 @@
   }
 
   function buildProductReviewsBlock(product) {
-    var reviews = Array.isArray(product.reviews) ? product.reviews : [];
+    var reviewsCount = getProductReviewsCount(product);
     var isExpanded = isProductReviewPanelExpanded(product.id);
-    var contentHtml = isExpanded ? buildProductReviewsContent(product) : "";
+    var reviewsLoaded = product && product.reviewsLoaded !== false;
+    var contentHtml = isExpanded && reviewsLoaded ? buildProductReviewsContent(product) : "";
+    var lazyState = reviewsLoaded ? "0" : "1";
 
     return ""
-      + "<section class=\"product-reviews\" data-product-id=\"" + escapeHtml(product.id) + "\" data-product-reviews-lazy=\"" + (isExpanded ? "0" : "1") + "\">"
+      + "<section class=\"product-reviews\" data-product-id=\"" + escapeHtml(product.id) + "\" data-product-reviews-lazy=\"" + (isExpanded ? lazyState : "1") + "\">"
       + "  <div class=\"product-reviews-head\">"
       + "    <strong>Отзывы покупателей</strong>"
       + "    <div class=\"product-reviews-head-right\">"
-      + "      <span>Всего: " + reviews.length + "</span>"
+      + "      <span>Всего: " + reviewsCount + "</span>"
       + "      <button class=\"btn btn-ghost product-reviews-toggle\" type=\"button\" data-product-reviews-toggle aria-expanded=\"" + (isExpanded ? "true" : "false") + "\">" + (isExpanded ? "Свернуть" : "Развернуть") + "</button>"
       + "    </div>"
       + "  </div>"
