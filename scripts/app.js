@@ -27,6 +27,8 @@
   var COMPACT_VIEWPORT_MAX_WIDTH = 700;
   var MOBILE_VISIBLE_COUNT = 4;
   var DESKTOP_VISIBLE_COUNT = 8;
+  var MOBILE_RENDER_CHUNK_SIZE = 2;
+  var DESKTOP_RENDER_CHUNK_SIZE = 4;
   var REVIEWS_COLLAPSED_KEY = "veligodsky_reviews_collapsed_v1";
   var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
   var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
@@ -39,6 +41,7 @@
     homepageReviews: [],
     filteredProducts: [],
     visibleCount: DESKTOP_VISIBLE_COUNT,
+    catalogRenderedCount: 0,
     activeTab: "week",
     lastReviewInteractionAt: 0,
     productReviewPanels: readStoredProductReviewPanels(),
@@ -58,6 +61,8 @@
   var moscowTimeFormatter = null;
   var filtersDebounceTimer = null;
   var filtersResetPending = false;
+  var catalogRenderToken = 0;
+  var catalogLoadMoreInFlight = false;
 
   document.addEventListener("DOMContentLoaded", function () {
     init().catch(function () {
@@ -103,6 +108,10 @@
 
   function getCatalogBatchSize() {
     return isCompactViewport() ? MOBILE_VISIBLE_COUNT : DESKTOP_VISIBLE_COUNT;
+  }
+
+  function getCatalogRenderChunkSize() {
+    return isCompactViewport() ? MOBILE_RENDER_CHUNK_SIZE : DESKTOP_RENDER_CHUNK_SIZE;
   }
 
   function runDeferredTask(callback, timeoutMs) {
@@ -293,8 +302,7 @@
 
     if (elements.showMoreBtn) {
       elements.showMoreBtn.addEventListener("click", function () {
-        state.visibleCount += getCatalogBatchSize();
-        renderCatalog();
+        loadMoreCatalog();
       });
     }
 
@@ -1079,7 +1087,9 @@
       return queryMatch && genderMatch && brandMatch && priceMatch;
     });
 
-    renderCatalog();
+    renderCatalog({
+      reset: true
+    });
   }
 
   function scheduleApplyFilters(resetVisibleCount) {
@@ -1105,32 +1115,146 @@
     applyFilters(true);
   }
 
-  function renderCatalog() {
-    if (!elements.catalogGrid) {
+  function setShowMoreLoadingState(isLoading) {
+    if (!elements.showMoreBtn) {
       return;
     }
 
-    if (!state.filteredProducts.length) {
-      elements.catalogGrid.innerHTML = "<div class=\"empty-state\">По заданным фильтрам ароматы не найдены.</div>";
-      elements.showMoreBtn.classList.add("hidden");
+    elements.showMoreBtn.disabled = Boolean(isLoading);
+    elements.showMoreBtn.classList.toggle("is-loading", Boolean(isLoading));
+    elements.showMoreBtn.textContent = isLoading ? "Загружаем..." : "Показать ещё";
+  }
+
+  function updateShowMoreButtonState() {
+    if (!elements.showMoreBtn) {
       return;
     }
 
-    var items = state.filteredProducts.slice(0, state.visibleCount);
+    var hasMore = state.catalogRenderedCount < state.filteredProducts.length;
+    elements.showMoreBtn.classList.toggle("hidden", !hasMore);
+    if (!hasMore) {
+      setShowMoreLoadingState(false);
+    }
+  }
 
-    elements.catalogGrid.innerHTML = items.map(function (product) {
+  function buildCatalogCardsHtml(products) {
+    return products.map(function (product) {
       return buildProductCard(product, {
         showTopBadge: product.topWeek || product.topMonth,
         compact: false,
         mode: "catalog"
       });
     }).join("");
+  }
 
-    var hasMore = state.visibleCount < state.filteredProducts.length;
-    elements.showMoreBtn.classList.toggle("hidden", !hasMore);
-    initProductReviewSections();
-    restoreProductReviewDrafts();
-    observeRevealElements();
+  function getScopedElements(root, selector) {
+    if (!root) {
+      return [];
+    }
+
+    var nodes = [];
+    if (typeof root.matches === "function" && root.matches(selector)) {
+      nodes.push(root);
+    }
+
+    return nodes.concat(Array.prototype.slice.call(root.querySelectorAll(selector)));
+  }
+
+  function appendCatalogCardsRange(startIndex, endIndex, renderToken) {
+    if (!elements.catalogGrid || renderToken !== catalogRenderToken) {
+      return;
+    }
+
+    if (startIndex >= endIndex) {
+      catalogLoadMoreInFlight = false;
+      setShowMoreLoadingState(false);
+      updateShowMoreButtonState();
+      return;
+    }
+
+    var chunkSize = getCatalogRenderChunkSize();
+    var nextIndex = Math.min(endIndex, startIndex + chunkSize);
+    var html = buildCatalogCardsHtml(state.filteredProducts.slice(startIndex, nextIndex));
+    var temp = document.createElement("div");
+    temp.innerHTML = html;
+
+    var fragment = document.createDocumentFragment();
+    var appendedCards = [];
+    while (temp.firstElementChild) {
+      var child = temp.firstElementChild;
+      appendedCards.push(child);
+      fragment.appendChild(child);
+    }
+
+    elements.catalogGrid.appendChild(fragment);
+    state.catalogRenderedCount = nextIndex;
+
+    appendedCards.forEach(function (card) {
+      initProductReviewSections(card);
+      restoreProductReviewDrafts(card);
+      observeRevealElements(card);
+    });
+
+    updateShowMoreButtonState();
+
+    if (nextIndex >= endIndex) {
+      catalogLoadMoreInFlight = false;
+      setShowMoreLoadingState(false);
+      return;
+    }
+
+    window.requestAnimationFrame(function () {
+      appendCatalogCardsRange(nextIndex, endIndex, renderToken);
+    });
+  }
+
+  function loadMoreCatalog() {
+    if (catalogLoadMoreInFlight) {
+      return;
+    }
+
+    state.visibleCount += getCatalogBatchSize();
+    renderCatalog({
+      append: true
+    });
+  }
+
+  function renderCatalog(options) {
+    if (!elements.catalogGrid) {
+      return;
+    }
+
+    var shouldReset = !options || options.reset === true;
+
+    if (!state.filteredProducts.length) {
+      elements.catalogGrid.innerHTML = "<div class=\"empty-state\">По заданным фильтрам ароматы не найдены.</div>";
+      state.catalogRenderedCount = 0;
+      catalogLoadMoreInFlight = false;
+      catalogRenderToken += 1;
+      updateShowMoreButtonState();
+      return;
+    }
+
+    var targetCount = Math.min(state.visibleCount, state.filteredProducts.length);
+    if (shouldReset || state.catalogRenderedCount > targetCount) {
+      catalogRenderToken += 1;
+      state.catalogRenderedCount = 0;
+      elements.catalogGrid.innerHTML = "";
+    }
+
+    updateShowMoreButtonState();
+
+    if (targetCount <= state.catalogRenderedCount) {
+      catalogLoadMoreInFlight = false;
+      setShowMoreLoadingState(false);
+      return;
+    }
+
+    catalogLoadMoreInFlight = true;
+    setShowMoreLoadingState(!shouldReset);
+
+    var renderToken = catalogRenderToken;
+    appendCatalogCardsRange(state.catalogRenderedCount, targetCount, renderToken);
   }
 
   function buildProductCard(product, config) {
@@ -1224,8 +1348,8 @@
     setProductReviewPanelState(productId, nextExpanded);
   }
 
-  function initProductReviewSections() {
-    var sections = document.querySelectorAll(".product-reviews");
+  function initProductReviewSections(root) {
+    var sections = getScopedElements(root || document, ".product-reviews");
     sections.forEach(function (section) {
       var productId = String(section.getAttribute("data-product-id") || "").trim();
       var expanded = isProductReviewPanelExpanded(productId);
@@ -2087,8 +2211,8 @@
     });
   }
 
-  function restoreProductReviewDrafts() {
-    var forms = document.querySelectorAll("[data-product-review-form]");
+  function restoreProductReviewDrafts(root) {
+    var forms = getScopedElements(root || document, "[data-product-review-form]");
     forms.forEach(function (form) {
       var productId = String(form.getAttribute("data-product-id") || "").trim();
       if (!productId) {
@@ -2504,12 +2628,17 @@
     });
   }
 
-  function observeRevealElements() {
+  function observeRevealElements(root) {
+    var scope = root || document;
+
     if (!revealObserver) {
+      getScopedElements(scope, ".reveal").forEach(function (node) {
+        node.classList.add("is-visible");
+      });
       return;
     }
 
-    document.querySelectorAll(".reveal:not(.is-visible)").forEach(function (item) {
+    getScopedElements(scope, ".reveal:not(.is-visible)").forEach(function (item) {
       revealObserver.observe(item);
     });
   }
