@@ -24,6 +24,9 @@
   var AUTO_SYNC_FOCUS_DELAY_MS = 1500;
   var FILTER_INPUT_DEBOUNCE_MS = 120;
   var MAX_HERO_IMAGE_LENGTH = 900 * 1024;
+  var COMPACT_VIEWPORT_MAX_WIDTH = 700;
+  var MOBILE_VISIBLE_COUNT = 4;
+  var DESKTOP_VISIBLE_COUNT = 8;
   var REVIEWS_COLLAPSED_KEY = "veligodsky_reviews_collapsed_v1";
   var HOMEPAGE_REVIEW_DRAFT_KEY = "veligodsky_homepage_review_draft_v1";
   var PRODUCT_REVIEW_DRAFTS_KEY = "veligodsky_product_review_drafts_v1";
@@ -35,7 +38,7 @@
     products: [],
     homepageReviews: [],
     filteredProducts: [],
-    visibleCount: 8,
+    visibleCount: DESKTOP_VISIBLE_COUNT,
     activeTab: "week",
     lastReviewInteractionAt: 0,
     productReviewPanels: readStoredProductReviewPanels(),
@@ -61,19 +64,8 @@
       state.products = store.getProducts();
       state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
       syncProductReviewPanelsWithProducts();
-      bindEvents();
-      syncSettingsToUI();
-      renderHomepageReviews();
-      renderBrandFilter();
-      renderTopSections();
-      applyFilters(true);
-      restoreReviewDrafts();
-      renderCart();
-      setCurrentYear();
-      initRevealObserver();
-      observeRevealElements();
-      startAutoSync();
-      startBackupNoticeClock();
+      runPrimaryStartupTasks();
+      scheduleSecondaryStartupTasks();
       showToast("Работаем офлайн: данные не синхронизированы с сервером.", true);
     });
   });
@@ -88,19 +80,78 @@
     state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
     syncProductReviewPanelsWithProducts();
 
+    runPrimaryStartupTasks();
+    scheduleSecondaryStartupTasks();
+  }
+
+  function isCompactViewport() {
+    if (typeof window !== "undefined" && window.matchMedia) {
+      return window.matchMedia("(max-width: " + COMPACT_VIEWPORT_MAX_WIDTH + "px)").matches;
+    }
+    if (typeof window !== "undefined" && Number.isFinite(window.innerWidth)) {
+      return window.innerWidth <= COMPACT_VIEWPORT_MAX_WIDTH;
+    }
+    return false;
+  }
+
+  function prefersReducedMotion() {
+    if (typeof window === "undefined" || !window.matchMedia) {
+      return false;
+    }
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function getCatalogBatchSize() {
+    return isCompactViewport() ? MOBILE_VISIBLE_COUNT : DESKTOP_VISIBLE_COUNT;
+  }
+
+  function runDeferredTask(callback, timeoutMs) {
+    if (typeof callback !== "function") {
+      return;
+    }
+
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(function () {
+        callback();
+      }, {
+        timeout: Math.max(200, Math.round(Number(timeoutMs) || 600))
+      });
+      return;
+    }
+
+    window.setTimeout(callback, 34);
+  }
+
+  function runPrimaryStartupTasks() {
+    state.visibleCount = getCatalogBatchSize();
     bindEvents();
     syncSettingsToUI();
-    renderHomepageReviews();
     renderBrandFilter();
-    renderTopSections();
     applyFilters(true);
-    restoreReviewDrafts();
     renderCart();
     setCurrentYear();
+  }
+
+  function runSecondaryStartupTasks() {
+    renderHomepageReviews();
+    renderTopSections();
+    restoreReviewDrafts();
     initRevealObserver();
     observeRevealElements();
     startAutoSync();
     startBackupNoticeClock();
+
+    if (elements.homepageReviewForm) {
+      ensureReviewCaptcha(elements.homepageReviewForm);
+    }
+
+    updateHomepageReviewsNavState();
+  }
+
+  function scheduleSecondaryStartupTasks() {
+    runDeferredTask(function () {
+      runSecondaryStartupTasks();
+    }, 700);
   }
 
   function cacheElements() {
@@ -242,7 +293,7 @@
 
     if (elements.showMoreBtn) {
       elements.showMoreBtn.addEventListener("click", function () {
-        state.visibleCount += 4;
+        state.visibleCount += getCatalogBatchSize();
         renderCatalog();
       });
     }
@@ -291,9 +342,6 @@
 
     window.addEventListener("resize", updateHomepageReviewsNavState);
 
-    if (elements.homepageReviewForm) {
-      ensureReviewCaptcha(elements.homepageReviewForm);
-    }
   }
 
   function readReviewsCollapsedState() {
@@ -637,7 +685,7 @@
       elements.freeShippingInline.textContent = store.formatPrice(settings.freeShippingThreshold);
     }
     if (elements.stockBannerText) {
-      elements.stockBannerText.textContent = "Не нашли нужный аромат? Напишите в Telegram: в наличии больше позиций, чем в каталоге.";
+      elements.stockBannerText.textContent = "Не нашли нужный аромат? В Telegram позиций больше, чем в каталоге.";
     }
 
     applyHeroBackground(settings);
@@ -998,7 +1046,7 @@
 
   function applyFilters(resetVisibleCount) {
     if (resetVisibleCount) {
-      state.visibleCount = 8;
+      state.visibleCount = getCatalogBatchSize();
     }
 
     var query = String(elements.searchInput.value || "").trim().toLowerCase();
@@ -2436,7 +2484,7 @@
   }
 
   function initRevealObserver() {
-    if (!("IntersectionObserver" in window)) {
+    if (isCompactViewport() || prefersReducedMotion() || !("IntersectionObserver" in window)) {
       document.querySelectorAll(".reveal").forEach(function (node) {
         node.classList.add("is-visible");
       });
