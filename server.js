@@ -52,8 +52,10 @@ const STORE_HISTORY_MAX_ROWS = Math.max(20, Number(process.env.STORE_HISTORY_MAX
 const STORE_DELETE_INTENT_SAMPLE_LIMIT = Math.max(1, Number(process.env.STORE_DELETE_INTENT_SAMPLE_LIMIT || 8));
 const RESPONSE_COMPRESSION_MIN_BYTES = Math.max(512, Number(process.env.RESPONSE_COMPRESSION_MIN_BYTES || 1400));
 const RESPONSE_COMPRESSION_MAX_BYTES = Math.max(64 * 1024, Number(process.env.RESPONSE_COMPRESSION_MAX_BYTES || 4 * 1024 * 1024));
-const ADMIN_CATALOG_DEFAULT_LIMIT = Math.max(12, Number(process.env.ADMIN_CATALOG_DEFAULT_LIMIT || 24));
+const ADMIN_CATALOG_DEFAULT_LIMIT = Math.max(1, Number(process.env.ADMIN_CATALOG_DEFAULT_LIMIT || 10));
 const ADMIN_CATALOG_MAX_LIMIT = Math.max(ADMIN_CATALOG_DEFAULT_LIMIT, Number(process.env.ADMIN_CATALOG_MAX_LIMIT || 80));
+const ADMIN_CATALOG_CACHE_MAX_ENTRIES = Math.max(10, Number(process.env.ADMIN_CATALOG_CACHE_MAX_ENTRIES || 40));
+const PRODUCT_IMAGE_CACHE_MAX_ENTRIES = Math.max(20, Number(process.env.PRODUCT_IMAGE_CACHE_MAX_ENTRIES || 180));
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -188,6 +190,12 @@ const adminSessions = new Map();
 const rateLimitBuckets = new Map();
 let rateLimitLastCleanupAt = 0;
 const adminLoginFailures = new Map();
+const derivedResponseCache = {
+  publicCatalog: null,
+  adminCatalogPages: new Map(),
+  productReviews: new Map(),
+  productImages: new Map()
+};
 
 function cloneData(data) {
   return JSON.parse(JSON.stringify(data));
@@ -210,6 +218,45 @@ function appendVaryHeader(value, token) {
   }
 
   return existing + ", " + normalizedToken;
+}
+
+function getLruCacheEntry(cacheMap, key) {
+  if (!cacheMap || typeof cacheMap.get !== "function" || !cacheMap.has(key)) {
+    return null;
+  }
+
+  const value = cacheMap.get(key);
+  cacheMap.delete(key);
+  cacheMap.set(key, value);
+  return value;
+}
+
+function setLruCacheEntry(cacheMap, key, value, maxEntries) {
+  if (!cacheMap || typeof cacheMap.set !== "function") {
+    return value;
+  }
+
+  if (cacheMap.has(key)) {
+    cacheMap.delete(key);
+  }
+  cacheMap.set(key, value);
+
+  while (cacheMap.size > maxEntries) {
+    const oldestKey = cacheMap.keys().next();
+    if (oldestKey.done) {
+      break;
+    }
+    cacheMap.delete(oldestKey.value);
+  }
+
+  return value;
+}
+
+function invalidateDerivedStoreCaches() {
+  derivedResponseCache.publicCatalog = null;
+  derivedResponseCache.adminCatalogPages.clear();
+  derivedResponseCache.productReviews.clear();
+  derivedResponseCache.productImages.clear();
 }
 
 function isCompressibleContentType(contentType) {
@@ -384,14 +431,19 @@ function sendPublicApiResponse(req, res, statusCode, payload, options) {
     : "public, max-age=" + maxAge;
 
   sendJsonWithEtag(req, res, statusCode, payload, {
-    cacheControl
+    cacheControl,
+    prebuiltBody: typeof safeOptions.prebuiltBody === "string" ? safeOptions.prebuiltBody : undefined,
+    prebuiltEtag: safeString(safeOptions.prebuiltEtag) || undefined,
+    vary: safeString(safeOptions.vary) || undefined
   });
 }
 
 function sendJsonWithEtag(req, res, statusCode, payload, options) {
   const safeOptions = options && typeof options === "object" ? options : {};
-  const body = JSON.stringify(payload);
-  const etag = buildWeakEtagFromString(body);
+  const body = typeof safeOptions.prebuiltBody === "string"
+    ? safeOptions.prebuiltBody
+    : JSON.stringify(payload);
+  const etag = safeString(safeOptions.prebuiltEtag) || buildWeakEtagFromString(body);
   const baseHeaders = {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": safeString(safeOptions.cacheControl) || "no-store",
@@ -432,6 +484,86 @@ function handleBodyReadFailure(res, error) {
     return true;
   }
 
+  return false;
+}
+
+function isJsonContentType(req) {
+  const raw = req && req.headers ? req.headers["content-type"] : "";
+  const header = Array.isArray(raw) ? raw.join(";") : safeString(raw);
+  if (!header) {
+    return false;
+  }
+  return header.toLowerCase().includes("application/json");
+}
+
+function ensureJsonBodyRequest(req, res) {
+  if (isJsonContentType(req)) {
+    return true;
+  }
+
+  sendJson(res, 415, {
+    error: "UNSUPPORTED_MEDIA_TYPE",
+    message: "Expected application/json"
+  });
+  return false;
+}
+
+function parseRequestOriginHeader(value) {
+  const safeValue = safeString(value);
+  if (!safeValue) {
+    return "";
+  }
+  try {
+    return new URL(safeValue).origin.toLowerCase();
+  } catch (error) {
+    return "";
+  }
+}
+
+function getTrustedRequestOrigins(req) {
+  const origins = new Set();
+  const host = safeString(req && req.headers && req.headers.host).toLowerCase();
+  if (host) {
+    origins.add("https://" + host);
+    origins.add("http://" + host);
+  }
+
+  const siteUrl = safeString(process.env.PUBLIC_SITE_URL || process.env.SITE_URL);
+  const siteOrigin = parseRequestOriginHeader(siteUrl);
+  if (siteOrigin) {
+    origins.add(siteOrigin);
+  }
+
+  return origins;
+}
+
+function ensureTrustedMutationRequest(req, res) {
+  const method = safeString(req && req.method).toUpperCase();
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    return true;
+  }
+
+  const secFetchSite = safeString(req && req.headers && req.headers["sec-fetch-site"]).toLowerCase();
+  if (secFetchSite === "cross-site") {
+    sendJson(res, 403, { error: "CROSS_SITE_FORBIDDEN" });
+    return false;
+  }
+
+  const origin = parseRequestOriginHeader(req && req.headers && req.headers.origin);
+  const referer = parseRequestOriginHeader(req && req.headers && req.headers.referer);
+  if (!origin && !referer) {
+    return true;
+  }
+
+  const trustedOrigins = getTrustedRequestOrigins(req);
+  if (origin && trustedOrigins.has(origin)) {
+    return true;
+  }
+  if (referer && trustedOrigins.has(referer)) {
+    return true;
+  }
+
+  sendJson(res, 403, { error: "UNTRUSTED_ORIGIN" });
   return false;
 }
 
@@ -1109,6 +1241,135 @@ function sanitizeAdminStoreData(data) {
     delete safe.settings.adminPassword;
   }
   return safe;
+}
+
+function getCachedPublicCatalogResponse(data) {
+  if (derivedResponseCache.publicCatalog) {
+    return derivedResponseCache.publicCatalog;
+  }
+
+  const safeData = sanitizePublicStoreData(data);
+  const items = Array.isArray(safeData.products)
+    ? safeData.products.map((product) => buildPublicCatalogProductSummary(product))
+    : [];
+  const payload = {
+    ok: true,
+    total: items.length,
+    items
+  };
+  const body = JSON.stringify(payload);
+  const value = {
+    payload,
+    body,
+    etag: buildWeakEtagFromString(body)
+  };
+  derivedResponseCache.publicCatalog = value;
+  return value;
+}
+
+function getCachedAdminCatalogPageResponse(data, options) {
+  const safeOptions = options && typeof options === "object" ? options : {};
+  const normalizedQuery = normalizeCatalogSearchQuery(safeOptions.query);
+  const limit = clampInteger(safeOptions.limit, 1, ADMIN_CATALOG_MAX_LIMIT, ADMIN_CATALOG_DEFAULT_LIMIT);
+  const offset = clampInteger(safeOptions.offset, 0, Number.MAX_SAFE_INTEGER, 0);
+  const cacheKey = normalizedQuery + "::" + offset + "::" + limit;
+  const cached = getLruCacheEntry(derivedResponseCache.adminCatalogPages, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const payload = getAdminCatalogPage(data, {
+    query: normalizedQuery,
+    offset,
+    limit
+  });
+  return setLruCacheEntry(derivedResponseCache.adminCatalogPages, cacheKey, payload, ADMIN_CATALOG_CACHE_MAX_ENTRIES);
+}
+
+function getCachedPublicProductReviewsResponse(data, productId) {
+  const safeProductId = safeString(productId).slice(0, 120);
+  if (!safeProductId) {
+    return null;
+  }
+
+  const cached = getLruCacheEntry(derivedResponseCache.productReviews, safeProductId);
+  if (cached) {
+    return cached;
+  }
+
+  const safeData = sanitizePublicStoreData(data);
+  const product = Array.isArray(safeData.products)
+    ? safeData.products.find((item) => safeString(item && item.id) === safeProductId)
+    : null;
+
+  if (!product) {
+    return null;
+  }
+
+  const reviews = Array.isArray(product.reviews)
+    ? product.reviews.map((review) => sanitizePublicReviewEntry(review))
+    : [];
+  const payload = {
+    ok: true,
+    productId: safeProductId,
+    total: reviews.length,
+    reviews
+  };
+  const body = JSON.stringify(payload);
+  return setLruCacheEntry(derivedResponseCache.productReviews, safeProductId, {
+    payload,
+    body,
+    etag: buildWeakEtagFromString(body)
+  }, ADMIN_CATALOG_CACHE_MAX_ENTRIES * 2);
+}
+
+function getCachedProductImageResponse(data, productId) {
+  const safeProductId = safeString(productId).slice(0, 120);
+  if (!safeProductId) {
+    return null;
+  }
+
+  const cached = getLruCacheEntry(derivedResponseCache.productImages, safeProductId);
+  if (cached) {
+    return cached;
+  }
+
+  const safeData = validateStoreData(data);
+  const product = Array.isArray(safeData.products)
+    ? safeData.products.find((item) => safeString(item && item.id) === safeProductId)
+    : null;
+
+  if (!product) {
+    return null;
+  }
+
+  const imageValue = safeString(product.image);
+  if (!imageValue) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(imageValue)) {
+    return setLruCacheEntry(derivedResponseCache.productImages, safeProductId, {
+      kind: "redirect",
+      location: imageValue
+    }, PRODUCT_IMAGE_CACHE_MAX_ENTRIES);
+  }
+
+  const dataUrlMatch = imageValue.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i);
+  if (!dataUrlMatch) {
+    return null;
+  }
+
+  const contentType = safeString(dataUrlMatch[1]).toLowerCase() || "image/jpeg";
+  const base64Payload = dataUrlMatch[2] || "";
+  const body = Buffer.from(base64Payload, "base64");
+  const value = {
+    kind: "binary",
+    contentType,
+    body,
+    etag: buildWeakEtagFromString(imageValue)
+  };
+  return setLruCacheEntry(derivedResponseCache.productImages, safeProductId, value, PRODUCT_IMAGE_CACHE_MAX_ENTRIES);
 }
 
 function getStoreDataForRequest(req, data) {
@@ -1797,6 +2058,47 @@ class PostgresStoreRepository {
   }
 }
 
+class CachedStoreRepository {
+  constructor(innerRepository) {
+    this.innerRepository = innerRepository;
+    this.cachedData = null;
+  }
+
+  async init() {
+    await this.innerRepository.init();
+  }
+
+  async read() {
+    if (this.cachedData) {
+      return cloneData(this.cachedData);
+    }
+
+    const data = validateStoreData(await this.innerRepository.read());
+    this.cachedData = cloneData(data);
+    return cloneData(this.cachedData);
+  }
+
+  async write(payload, options) {
+    const safeOptions = Object.assign({}, options || {});
+    if (!safeOptions.previousPayload && this.cachedData) {
+      safeOptions.previousPayload = cloneData(this.cachedData);
+    }
+
+    const saved = validateStoreData(await this.innerRepository.write(payload, safeOptions));
+    this.cachedData = cloneData(saved);
+    invalidateDerivedStoreCaches();
+    return cloneData(this.cachedData);
+  }
+
+  async createSnapshot(source) {
+    return this.innerRepository.createSnapshot(source);
+  }
+
+  async close() {
+    await this.innerRepository.close();
+  }
+}
+
 function normalizeDbPayload(rawPayload) {
   if (typeof rawPayload === "string") {
     return validateStoreData(JSON.parse(rawPayload));
@@ -1888,7 +2190,7 @@ async function createStoreRepository() {
   const strictDatabaseMode = isStrictDatabaseMode();
 
   if (isForceFileStorage()) {
-    const repository = new FileStoreRepository(DATA_FILE);
+    const repository = new CachedStoreRepository(new FileStoreRepository(DATA_FILE));
     await repository.init();
     console.log("Storage mode: file (" + DATA_FILE + "), FORCE_FILE_STORAGE enabled");
     return repository;
@@ -1899,7 +2201,7 @@ async function createStoreRepository() {
     try {
       const Pool = loadPgPool();
       pool = new Pool(buildDatabaseConfig());
-      const repository = new PostgresStoreRepository(pool);
+      const repository = new CachedStoreRepository(new PostgresStoreRepository(pool));
       await repository.init();
       console.log("Storage mode: PostgreSQL");
       return repository;
@@ -1925,7 +2227,7 @@ async function createStoreRepository() {
     throw new Error("DATABASE_CONFIG_REQUIRED_IN_STRICT_MODE");
   }
 
-  const repository = new FileStoreRepository(DATA_FILE);
+  const repository = new CachedStoreRepository(new FileStoreRepository(DATA_FILE));
   await repository.init();
   console.log("Storage mode: file (" + DATA_FILE + ")");
   return repository;
@@ -2025,6 +2327,9 @@ async function handleStoreApi(req, res, requestUrl) {
 
   if (req.method === "PUT") {
     if (!ensureAdminAuthorized(req, res)) {
+      return;
+    }
+    if (!ensureJsonBodyRequest(req, res)) {
       return;
     }
 
@@ -2155,16 +2460,11 @@ async function handlePublicCatalogApi(req, res) {
   }
 
   const data = await storeRepository.read();
-  const safeData = sanitizePublicStoreData(data);
-  const items = Array.isArray(safeData.products)
-    ? safeData.products.map((product) => buildPublicCatalogProductSummary(product))
-    : [];
+  const cachedResponse = getCachedPublicCatalogResponse(data);
 
-  sendPublicApiResponse(req, res, 200, {
-    ok: true,
-    total: items.length,
-    items
-  }, {
+  sendPublicApiResponse(req, res, 200, cachedResponse.payload, {
+    prebuiltBody: cachedResponse.body,
+    prebuiltEtag: cachedResponse.etag,
     maxAge: 30,
     staleWhileRevalidate: 180
   });
@@ -2188,41 +2488,25 @@ async function handleProductImageApi(req, res, requestUrl) {
   }
 
   const data = await storeRepository.read();
-  const safeData = validateStoreData(data);
-  const product = Array.isArray(safeData.products)
-    ? safeData.products.find((item) => safeString(item && item.id) === productId)
-    : null;
+  const imageResponse = getCachedProductImageResponse(data, productId);
 
-  if (!product) {
+  if (!imageResponse) {
     sendText(res, 404, "Not Found");
     return;
   }
 
-  const imageValue = safeString(product.image);
-  if (!imageValue) {
-    sendText(res, 404, "Not Found");
-    return;
-  }
-
-  if (/^https?:\/\//i.test(imageValue)) {
+  if (imageResponse.kind === "redirect") {
     res.writeHead(302, {
-      "Location": imageValue,
+      "Location": imageResponse.location,
       "Cache-Control": "public, max-age=3600"
     });
     res.end();
     return;
   }
 
-  const dataUrlMatch = imageValue.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i);
-  if (!dataUrlMatch) {
-    sendText(res, 404, "Not Found");
-    return;
-  }
-
-  const contentType = safeString(dataUrlMatch[1]).toLowerCase() || "image/jpeg";
-  const base64Payload = dataUrlMatch[2] || "";
-  const body = Buffer.from(base64Payload, "base64");
-  const etag = buildWeakEtagFromString(imageValue);
+  const contentType = safeString(imageResponse.contentType).toLowerCase() || "image/jpeg";
+  const body = imageResponse.body;
+  const etag = safeString(imageResponse.etag);
 
   if ((req.method === "GET" || req.method === "HEAD") && isEtagMatch(req, etag)) {
     res.writeHead(304, {
@@ -2273,7 +2557,7 @@ async function handleAdminCatalogApi(req, res, requestUrl) {
   const query = String(searchParams.get("q") || "").slice(0, 200);
 
   const data = await storeRepository.read();
-  const page = getAdminCatalogPage(data, {
+  const page = getCachedAdminCatalogPageResponse(data, {
     query,
     offset: offset === null ? 0 : offset,
     limit: limitRaw === null ? ADMIN_CATALOG_DEFAULT_LIMIT : limitRaw
@@ -2303,6 +2587,9 @@ async function handleAdminProductsApi(req, res) {
   }
 
   if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+  if (!ensureJsonBodyRequest(req, res)) {
     return;
   }
 
@@ -2459,6 +2746,9 @@ async function handleAdminAuthApi(req, res) {
     sendText(res, 405, "Method Not Allowed");
     return;
   }
+  if (!ensureJsonBodyRequest(req, res)) {
+    return;
+  }
 
   const clientIp = getClientIp(req);
   const banState = getAdminLoginBanState(clientIp);
@@ -2560,6 +2850,9 @@ async function handleAdminPasswordApi(req, res) {
   if (!ensureAdminAuthorized(req, res)) {
     return;
   }
+  if (!ensureJsonBodyRequest(req, res)) {
+    return;
+  }
 
   let raw;
   let parsed;
@@ -2619,6 +2912,9 @@ async function handleAdminSnapshotApi(req, res) {
   }
 
   if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+  if (!ensureJsonBodyRequest(req, res)) {
     return;
   }
 
@@ -2685,26 +2981,16 @@ async function handleProductReviewsApi(req, res) {
     }
 
     const currentData = await storeRepository.read();
-    const safeData = sanitizePublicStoreData(currentData);
-    const product = Array.isArray(safeData.products)
-      ? safeData.products.find((item) => safeString(item && item.id) === productId)
-      : null;
+    const cachedResponse = getCachedPublicProductReviewsResponse(currentData, productId);
 
-    if (!product) {
+    if (!cachedResponse) {
       sendJson(res, 404, { error: "PRODUCT_NOT_FOUND" });
       return;
     }
 
-    const reviews = Array.isArray(product.reviews)
-      ? product.reviews.map((review) => sanitizePublicReviewEntry(review))
-      : [];
-
-    sendPublicApiResponse(req, res, 200, {
-      ok: true,
-      productId,
-      total: reviews.length,
-      reviews
-    }, {
+    sendPublicApiResponse(req, res, 200, cachedResponse.payload, {
+      prebuiltBody: cachedResponse.body,
+      prebuiltEtag: cachedResponse.etag,
       maxAge: 30,
       staleWhileRevalidate: 120
     });
@@ -2713,6 +2999,9 @@ async function handleProductReviewsApi(req, res) {
 
   if (req.method !== "POST") {
     sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+  if (!ensureJsonBodyRequest(req, res)) {
     return;
   }
 
@@ -2838,6 +3127,9 @@ async function handleHomepageReviewsApi(req, res) {
     sendText(res, 405, "Method Not Allowed");
     return;
   }
+  if (!ensureJsonBodyRequest(req, res)) {
+    return;
+  }
 
   let raw;
   let parsed;
@@ -2927,6 +3219,9 @@ async function handleClientErrorsApi(req, res) {
     sendText(res, 405, "Method Not Allowed");
     return;
   }
+  if (!ensureJsonBodyRequest(req, res)) {
+    return;
+  }
 
   let raw;
   let parsed;
@@ -2986,7 +3281,11 @@ function applySecurityHeaders(res) {
     return;
   }
   res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-DNS-Prefetch-Control", "off");
   res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Permitted-Cross-Domain-Policies", "none");
+  res.setHeader("X-Download-Options", "noopen");
+  res.setHeader("Origin-Agent-Cluster", "?1");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
@@ -3109,6 +3408,10 @@ async function requestHandler(req, res) {
     }
 
     if (!ensureRateLimit(req, res, requestUrl.pathname)) {
+      return;
+    }
+
+    if (!ensureTrustedMutationRequest(req, res)) {
       return;
     }
 

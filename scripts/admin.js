@@ -23,9 +23,11 @@
   var CAPACITY_WARNING_STORE_MS = 1300;
   var CAPACITY_CRITICAL_HEALTH_MS = 1800;
   var CAPACITY_CRITICAL_STORE_MS = 2600;
-  var CATALOG_PAGE_SIZE = 24;
+  var CATALOG_PAGE_SIZE = 10;
+  var CATALOG_AUTO_PREFETCH_ENABLED = false;
   var CATALOG_PREFETCH_DELAY_MS = 650;
   var SEARCH_INPUT_DEBOUNCE_MS = 160;
+  var EDITOR_DRAFT_SAVE_DEBOUNCE_MS = 180;
 
   var state = {
     editingId: null,
@@ -56,6 +58,7 @@
 
   var elements = {};
   var toastTimer = null;
+  var editorDraftSaveTimer = null;
 
   document.addEventListener("DOMContentLoaded", function () {
     init().catch(function () {
@@ -156,7 +159,7 @@
 
     elements.addVolumeBtn.addEventListener("click", function () {
       appendVolumeRow();
-      saveEditorDraftFromForm();
+      scheduleEditorDraftSave();
     });
 
     elements.volumesContainer.addEventListener("click", function (event) {
@@ -172,14 +175,14 @@
       if (!elements.volumesContainer.children.length) {
         appendVolumeRow();
       }
-      saveEditorDraftFromForm();
+      scheduleEditorDraftSave();
     });
 
     elements.perfumeImageInput.addEventListener("change", handleImageUpload);
     elements.perfumeForm.addEventListener("submit", savePerfume);
     elements.cancelEditBtn.addEventListener("click", resetEditor);
-    elements.perfumeForm.addEventListener("input", saveEditorDraftFromForm);
-    elements.perfumeForm.addEventListener("change", saveEditorDraftFromForm);
+    elements.perfumeForm.addEventListener("input", scheduleEditorDraftSave);
+    elements.perfumeForm.addEventListener("change", scheduleEditorDraftSave);
 
     elements.adminProductsList.addEventListener("click", onProductListClick);
     elements.adminProductsList.addEventListener("change", onProductListChange);
@@ -192,8 +195,8 @@
     if (elements.adminCatalogLoadMoreBtn) {
       elements.adminCatalogLoadMoreBtn.addEventListener("click", onCatalogLoadMore);
     }
-    elements.volumesContainer.addEventListener("input", saveEditorDraftFromForm);
-    elements.volumesContainer.addEventListener("change", saveEditorDraftFromForm);
+    elements.volumesContainer.addEventListener("input", scheduleEditorDraftSave);
+    elements.volumesContainer.addEventListener("change", scheduleEditorDraftSave);
 
     if (elements.homepageReviewForm) {
       elements.homepageReviewForm.addEventListener("submit", saveHomepageReview);
@@ -794,6 +797,17 @@
     }
 
     writeEditorDraft(draft);
+  }
+
+  function scheduleEditorDraftSave() {
+    if (editorDraftSaveTimer) {
+      clearTimeout(editorDraftSaveTimer);
+    }
+
+    editorDraftSaveTimer = setTimeout(function () {
+      editorDraftSaveTimer = null;
+      saveEditorDraftFromForm();
+    }, EDITOR_DRAFT_SAVE_DEBOUNCE_MS);
   }
 
   function applyEditorDraft(draft) {
@@ -1408,6 +1422,9 @@
   }
 
   function shouldAutoPrefetchCatalog() {
+    if (!CATALOG_AUTO_PREFETCH_ENABLED) {
+      return false;
+    }
     if (state.catalogSearchQuery) {
       return false;
     }
@@ -1456,14 +1473,14 @@
     }
 
     if (!state.catalogSearchQuery) {
-      elements.adminCatalogMeta.textContent = state.catalogBackgroundLoading
-        ? "Загружено " + shown + " из " + totalCount + " товаров. Остальные подгружаются..."
-        : "Загружено " + shown + " из " + totalCount + " товаров";
+      elements.adminCatalogMeta.textContent = state.catalogHasMore
+        ? "Загружено " + shown + " из " + totalCount + " товаров. Для остальных нажмите «Показать еще»."
+        : "Загружено " + shown + " из " + totalCount + " товаров.";
       return;
     }
 
-    elements.adminCatalogMeta.textContent = state.catalogBackgroundLoading
-      ? "Найдено " + filteredCount + " из " + totalCount + " товаров. Уже загружено " + shown + ", продолжаем подгрузку..."
+    elements.adminCatalogMeta.textContent = state.catalogHasMore
+      ? "Найдено " + filteredCount + " из " + totalCount + " товаров. Загружено " + shown + ". Для остальных нажмите «Показать еще»."
       : "Найдено " + filteredCount + " из " + totalCount + " товаров. Загружено " + shown + ".";
   }
 

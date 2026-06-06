@@ -1294,7 +1294,7 @@
 
     var query = {
       offset: Math.max(0, Math.round(Number(safeOptions.offset) || 0)),
-      limit: Math.max(1, Math.round(Number(safeOptions.limit) || 24)),
+      limit: Math.max(1, Math.round(Number(safeOptions.limit) || 10)),
       q: String(safeOptions.query || "").trim()
     };
     var requestUrl = buildUrlWithQuery(API_ADMIN_CATALOG_URL, query);

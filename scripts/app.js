@@ -82,6 +82,14 @@
       await store.init({ skipRemote: true });
     }
     state.products = store.getProducts();
+    if (!state.products.length && typeof store.fetchPublicCatalog === "function") {
+      try {
+        await store.fetchPublicCatalog();
+        state.products = store.getProducts();
+      } catch (error) {
+        // Fallback to cached empty shell until background sync completes.
+      }
+    }
     state.homepageReviews = typeof store.getHomepageReviews === "function" ? store.getHomepageReviews() : [];
     syncProductReviewPanelsWithProducts();
 

@@ -2072,6 +2072,67 @@ body.menu-open .nav {
     margin-top: 22px;
   }
 
+  .admin-shell {
+    width: min(100%, calc(100vw - 12px));
+    margin: 12px auto 24px;
+  }
+
+  .admin-panel,
+  .admin-login {
+    padding: 14px;
+  }
+
+  .admin-topbar {
+    position: sticky;
+    top: 8px;
+    z-index: 20;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    background: rgba(10, 10, 10, 0.92);
+    backdrop-filter: blur(14px);
+  }
+
+  .admin-top-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .admin-top-actions .btn,
+  #saveSettingsBtn,
+  .editor-actions .btn,
+  .admin-catalog-load-more-wrap .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .image-preview-wrap,
+  .image-preview-wrap--hero {
+    width: 100%;
+    min-height: 180px;
+  }
+
+  .volume-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-product-head,
+  .admin-product-reviews-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .admin-product-actions,
+  .admin-review-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
   .catalog-grid {
     grid-template-columns: 1fr;
     gap: 14px;
@@ -2182,5 +2243,9 @@ body.menu-open .nav {
 
   .admin-catalog-clear {
     width: 100%;
+  }
+
+  .admin-top-actions {
+    grid-template-columns: 1fr;
   }
 }
