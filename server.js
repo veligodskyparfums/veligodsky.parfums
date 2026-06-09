@@ -1,5 +1,7 @@
 "use strict";
 
+require("dotenv").config({ quiet: true });
+
 const http = require("http");
 const fs = require("fs");
 const fsp = fs.promises;

@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "veligodsky-parfums",
   "version": "1.0.0",
   "private": true,
@@ -8,6 +8,7 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "pg": "^8.13.1"
   }
 }
