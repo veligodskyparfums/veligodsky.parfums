@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "dev": "node server.js",
     "build": "node --check server.js && node --check scripts/common.js && node --check scripts/app.js && node --check scripts/admin.js",
     "start": "node server.js"
   },
