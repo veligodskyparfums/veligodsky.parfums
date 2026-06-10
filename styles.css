@@ -373,10 +373,15 @@ body.menu-open .nav {
 .hero-bg {
   position: absolute;
   inset: 0;
-  background:
+  --hero-bg-image: none;
+  background-image:
     radial-gradient(120% 90% at 78% 18%, rgba(44, 88, 133, 0.36) 0%, rgba(15, 23, 37, 0.06) 52%, rgba(7, 10, 16, 0) 100%),
     linear-gradient(102deg, rgba(6, 9, 15, 0.96) 0%, rgba(8, 14, 24, 0.86) 34%, rgba(10, 20, 34, 0.72) 58%, rgba(7, 12, 21, 0.92) 100%),
-    linear-gradient(180deg, rgba(7, 10, 16, 0.24) 0%, rgba(7, 10, 16, 0.92) 78%, rgba(7, 10, 16, 0.99) 100%);
+    linear-gradient(180deg, rgba(7, 10, 16, 0.24) 0%, rgba(7, 10, 16, 0.92) 78%, rgba(7, 10, 16, 0.99) 100%),
+    var(--hero-bg-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
   transform: scale(1.06);
 }
 
