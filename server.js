@@ -1541,6 +1541,51 @@ async function getHistoricalProductImageResponse(productId) {
   return setLruCacheEntry(derivedResponseCache.productImages, safeProductId, value, PRODUCT_IMAGE_CACHE_MAX_ENTRIES);
 }
 
+async function repairSingleProductImageFromHistory(productId) {
+  const safeProductId = safeString(productId).slice(0, 120);
+  if (!safeProductId || !storeRepository || typeof storeRepository.findHistoricalProductImage !== "function") {
+    return false;
+  }
+
+  return runSerializedStoreMutation(async () => {
+    const currentData = await storeRepository.read();
+    const nextData = cloneData(validateStoreData(currentData));
+    const productIndex = Array.isArray(nextData.products)
+      ? nextData.products.findIndex((item) => safeString(item && item.id) === safeProductId)
+      : -1;
+
+    if (productIndex < 0) {
+      return false;
+    }
+
+    const currentProduct = nextData.products[productIndex];
+    const currentImage = normalizePersistedProductImage(currentProduct && currentProduct.image, "", safeProductId, false);
+    if (
+      currentImage
+      && !isProductImageApiPath(currentImage, safeProductId)
+      && isRenderableProductImageValue(currentImage, safeProductId)
+    ) {
+      return false;
+    }
+
+    const historicalImage = await storeRepository.findHistoricalProductImage(safeProductId);
+    if (
+      !historicalImage
+      || isProductImageApiPath(historicalImage, safeProductId)
+      || !isRenderableProductImageValue(historicalImage, safeProductId)
+    ) {
+      return false;
+    }
+
+    nextData.products[productIndex].image = historicalImage;
+    await storeRepository.write(nextData, {
+      previousPayload: currentData,
+      source: "image_repair_on_demand"
+    });
+    return true;
+  });
+}
+
 async function repairBrokenProductImagesFromHistory(repository) {
   if (!repository || typeof repository.read !== "function" || typeof repository.write !== "function" || typeof repository.findHistoricalProductImage !== "function") {
     return { repaired: 0, skipped: 0 };
@@ -1596,6 +1641,106 @@ function ensureIncomingAdminPassword(payload, currentData) {
   const next = cloneData(validateStoreData(payload));
   const currentPassword = readAdminPassword(currentData);
   next.settings.adminPassword = normalizePersistedAdminPassword(currentPassword);
+  return next;
+}
+
+function hasPartialProductPayload(product) {
+  return Boolean(
+    product
+    && typeof product === "object"
+    && (
+      product.detailsLoaded === false
+      || product.reviewsLoaded === false
+      || product.pendingReviewsLoaded === false
+    )
+  );
+}
+
+async function resolveRecoverableProductImage(productId, candidateImage, currentImage) {
+  const safeProductId = safeString(productId).slice(0, 120);
+  if (!safeProductId) {
+    return "";
+  }
+
+  const normalizedCandidate = normalizePersistedProductImage(candidateImage, currentImage, safeProductId, false);
+  if (
+    normalizedCandidate
+    && !isProductImageApiPath(normalizedCandidate, safeProductId)
+    && isRenderableProductImageValue(normalizedCandidate, safeProductId)
+  ) {
+    return normalizedCandidate;
+  }
+
+  const normalizedCurrent = normalizePersistedProductImage(currentImage, "", safeProductId, false);
+  if (
+    normalizedCurrent
+    && !isProductImageApiPath(normalizedCurrent, safeProductId)
+    && isRenderableProductImageValue(normalizedCurrent, safeProductId)
+  ) {
+    return normalizedCurrent;
+  }
+
+  if (!storeRepository || typeof storeRepository.findHistoricalProductImage !== "function") {
+    return "";
+  }
+
+  const historicalImage = await storeRepository.findHistoricalProductImage(safeProductId);
+  if (
+    historicalImage
+    && !isProductImageApiPath(historicalImage, safeProductId)
+    && isRenderableProductImageValue(historicalImage, safeProductId)
+  ) {
+    return historicalImage;
+  }
+
+  return "";
+}
+
+async function mergeIncomingStorePayloadWithCurrentData(payload, currentData) {
+  const next = ensureIncomingAdminPassword(payload, currentData);
+  const currentProducts = Array.isArray(currentData && currentData.products) ? currentData.products : [];
+  const currentProductsById = new Map(
+    currentProducts
+      .map((product) => [safeString(product && product.id).slice(0, 120), product])
+      .filter((entry) => entry[0])
+  );
+
+  next.products = await Promise.all(
+    next.products.map(async (product) => {
+      if (!product || typeof product !== "object") {
+        return product;
+      }
+
+      const safeProductId = safeString(product.id).slice(0, 120);
+      const currentProduct = safeProductId ? currentProductsById.get(safeProductId) || null : null;
+      const looksPartial = hasPartialProductPayload(product);
+      const nextProduct = looksPartial && currentProduct
+        ? cloneData(currentProduct)
+        : cloneData(product);
+
+      const recoveredImage = await resolveRecoverableProductImage(
+        safeProductId,
+        product.image,
+        currentProduct && currentProduct.image
+      );
+
+      if (recoveredImage) {
+        nextProduct.image = recoveredImage;
+      } else if (currentProduct && currentProduct.image !== undefined) {
+        nextProduct.image = currentProduct.image;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(product, "topWeek")) {
+        nextProduct.topWeek = Boolean(product.topWeek);
+      }
+      if (Object.prototype.hasOwnProperty.call(product, "topMonth")) {
+        nextProduct.topMonth = Boolean(product.topMonth);
+      }
+
+      return nextProduct;
+    })
+  );
+
   return next;
 }
 
@@ -2595,7 +2740,7 @@ async function handleStoreApi(req, res, requestUrl) {
           throw mismatchError;
         }
 
-        const nextPayload = ensureIncomingAdminPassword(parsed, currentData);
+        const nextPayload = await mergeIncomingStorePayloadWithCurrentData(parsed, currentData);
         const shrinkGuard = getCatalogShrinkGuard(currentData, nextPayload);
         if (shrinkGuard.blocked && !forceReplaceFromPayload) {
           const guardError = new Error("CATALOG_SHRINK_BLOCKED");
@@ -2707,6 +2852,9 @@ async function handleProductImageApi(req, res, requestUrl) {
   let imageResponse = getCachedProductImageResponse(data, productId);
   if (!imageResponse) {
     imageResponse = await getHistoricalProductImageResponse(productId);
+    if (imageResponse) {
+      await repairSingleProductImageFromHistory(productId).catch(() => false);
+    }
   }
 
   if (!imageResponse) {
@@ -2843,7 +2991,18 @@ async function handleAdminProductsApi(req, res) {
       const incomingId = safeString(incomingProduct && incomingProduct.id).slice(0, 120);
       const productIndex = nextData.products.findIndex((product) => safeString(product && product.id) === incomingId);
       const existingProduct = productIndex >= 0 ? nextData.products[productIndex] : null;
-      const nextProduct = sanitizeIncomingAdminProduct(incomingProduct, existingProduct);
+      const existingProductForSanitize = existingProduct ? cloneData(existingProduct) : null;
+      if (existingProductForSanitize) {
+        const recoveredImage = await resolveRecoverableProductImage(
+          incomingId || existingProductForSanitize.id,
+          incomingProduct && incomingProduct.image,
+          existingProductForSanitize.image
+        );
+        if (recoveredImage) {
+          existingProductForSanitize.image = recoveredImage;
+        }
+      }
+      const nextProduct = sanitizeIncomingAdminProduct(incomingProduct, existingProductForSanitize);
       const created = productIndex < 0;
 
       if (created) {
@@ -2915,9 +3074,15 @@ async function handleAdminProductByIdApi(req, res, requestUrl) {
       return;
     }
 
+    const responseProduct = cloneData(product);
+    const recoveredImage = await resolveRecoverableProductImage(productId, responseProduct.image, "");
+    if (recoveredImage) {
+      responseProduct.image = recoveredImage;
+    }
+
     sendJson(res, 200, {
       ok: true,
-      product
+      product: responseProduct
     });
     return;
   }

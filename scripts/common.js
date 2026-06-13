@@ -1584,8 +1584,20 @@
     return Array.isArray(data.pendingHomepageReviews) ? data.pendingHomepageReviews : [];
   }
 
+  async function loadWritableStoreDataBase() {
+    if (!canUseRemoteStore()) {
+      return loadData();
+    }
+
+    try {
+      return await fetchRemoteDataWithRetry({ includeProducts: true });
+    } catch (error) {
+      return loadData();
+    }
+  }
+
   async function saveHomepageReviews(reviews) {
-    var data = loadData();
+    var data = await loadWritableStoreDataBase();
     data.reviews = normalizeReviewList(reviews, {
       prefix: "hr",
       maxItems: 30,
@@ -1597,7 +1609,7 @@
   }
 
   async function savePendingHomepageReviews(reviews) {
-    var data = loadData();
+    var data = await loadWritableStoreDataBase();
     data.pendingHomepageReviews = normalizeReviewList(reviews, {
       prefix: "phr",
       maxItems: 120,
@@ -1785,7 +1797,7 @@
   }
 
   async function updateSettings(patch) {
-    var data = loadData();
+    var data = await loadWritableStoreDataBase();
     data.settings = Object.assign({}, data.settings, patch || {});
     data.settings.freeShippingThreshold = Math.max(0, Math.round(toNumber(data.settings.freeShippingThreshold, 8000)));
     data.settings.backupNoticeEnabled = toBoolean(data.settings.backupNoticeEnabled, true);
