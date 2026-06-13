@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1500" role="img" aria-labelledby="title desc">
+  <title id="title">Product placeholder</title>
+  <desc id="desc">Minimal dark placeholder for unavailable perfume image.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#101010"/>
+      <stop offset="55%" stop-color="#181818"/>
+      <stop offset="100%" stop-color="#080808"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f6f6f6" stop-opacity="0.88"/>
+      <stop offset="35%" stop-color="#bdbdbd" stop-opacity="0.72"/>
+      <stop offset="65%" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#7f7f7f" stop-opacity="0.58"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#666"/>
+      <stop offset="50%" stop-color="#f0f0f0"/>
+      <stop offset="100%" stop-color="#5c5c5c"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="1500" fill="url(#bg)"/>
+  <circle cx="980" cy="210" r="260" fill="#ffffff" opacity="0.05"/>
+  <circle cx="180" cy="1240" r="300" fill="#ffffff" opacity="0.035"/>
+  <g transform="translate(0 30)">
+    <rect x="458" y="150" width="284" height="160" rx="42" fill="#050505" stroke="url(#metal)" stroke-width="10"/>
+    <rect x="490" y="278" width="220" height="68" rx="26" fill="#0d0d0d" stroke="#8f8f8f" stroke-opacity="0.4" stroke-width="6"/>
+    <path d="M355 390c38-55 124-86 245-86h0c121 0 207 31 245 86 27 39 41 92 41 160v320c0 187-115 328-286 328s-286-141-286-328V550c0-68 14-121 41-160Z" fill="none" stroke="url(#glass)" stroke-width="26"/>
+    <path d="M395 425c31-40 102-62 205-62s174 22 205 62c20 26 30 62 30 110v305c0 153-90 270-235 270S365 993 365 840V535c0-48 10-84 30-110Z" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.18" stroke-width="4"/>
+    <path d="M450 470c33-25 84-39 150-39 47 0 92 7 128 22" fill="none" stroke="#ffffff" stroke-opacity="0.66" stroke-width="14" stroke-linecap="round"/>
+    <ellipse cx="600" cy="1190" rx="280" ry="52" fill="#ffffff" opacity="0.08"/>
+  </g>
+  <text x="50%" y="1320" fill="#f5f5f5" fill-opacity="0.94" font-size="72" font-family="Cormorant Garamond, Georgia, serif" text-anchor="middle" letter-spacing="8">VELIGODSKY PARFUMS</text>
+  <text x="50%" y="1390" fill="#d7d7d7" fill-opacity="0.72" font-size="32" font-family="Manrope, Arial, sans-serif" text-anchor="middle" letter-spacing="4">Изображение временно недоступно</text>
+</svg>

@@ -154,6 +154,7 @@ const ALLOWED_STATIC_FILES = new Set([
   "favicon.svg",
   "assets/hero-welcome-readable.jpg",
   "assets/hero-welcome-logo.jpg",
+  "assets/product-placeholder.svg",
   "robots.txt",
   "sitemap.xml",
   "privacy.html",
@@ -1167,6 +1168,173 @@ function buildProductImageApiPath(productId) {
   return "/api/product-image/" + encodeURIComponent(safeId);
 }
 
+function isHttpImageUrl(value) {
+  return /^https?:\/\//i.test(safeString(value));
+}
+
+function isDataImageUrl(value) {
+  return /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i.test(safeString(value));
+}
+
+function parseStaticProductImagePath(value) {
+  const safe = safeString(value);
+  if (!safe) {
+    return "";
+  }
+
+  if (isHttpImageUrl(safe) || isDataImageUrl(safe) || /^blob:/i.test(safe) || safe.startsWith("//")) {
+    return "";
+  }
+
+  if (/[<>"'`]/.test(safe) || /^[a-z]:[\\/]/i.test(safe) || safe.startsWith("\\\\")) {
+    return "";
+  }
+
+  let normalized = safe.replace(/\\/g, "/");
+  if (normalized.startsWith("../") || normalized.includes("/../") || normalized === "..") {
+    return "";
+  }
+
+  if (normalized.startsWith("./")) {
+    normalized = normalized.slice(2);
+  }
+
+  if (normalized.startsWith("/")) {
+    return normalized;
+  }
+
+  if (!/\.(?:png|jpe?g|gif|webp|svg|ico|avif)$/i.test(normalized)) {
+    return "";
+  }
+
+  return "/" + normalized.replace(/^\/+/, "");
+}
+
+function isProductImageApiPath(value, expectedProductId) {
+  const safe = safeString(value);
+  const prefix = "/api/product-image/";
+  if (!safe.startsWith(prefix)) {
+    return false;
+  }
+
+  if (!expectedProductId) {
+    return true;
+  }
+
+  return safe === buildProductImageApiPath(expectedProductId);
+}
+
+function isRenderableProductImageValue(value, productId) {
+  if (isHttpImageUrl(value) || isDataImageUrl(value)) {
+    return true;
+  }
+
+  if (parseStaticProductImagePath(value)) {
+    return true;
+  }
+
+  return false;
+}
+
+function normalizePersistedProductImage(rawValue, existingImage, productId, allowLegacyProxyValue) {
+  const safe = safeString(rawValue).slice(0, 2 * 1024 * 1024);
+  if (isHttpImageUrl(safe) || isDataImageUrl(safe)) {
+    return safe;
+  }
+
+  const staticPath = parseStaticProductImagePath(safe);
+  if (staticPath) {
+    return staticPath;
+  }
+
+  const safeExisting = safeString(existingImage).slice(0, 2 * 1024 * 1024);
+  if (isProductImageApiPath(safe, productId)) {
+    if (safeExisting && !isProductImageApiPath(safeExisting, productId)) {
+      return normalizePersistedProductImage(safeExisting, "", productId, false);
+    }
+    return allowLegacyProxyValue ? safe : "";
+  }
+
+  if (!safe && safeExisting) {
+    return normalizePersistedProductImage(safeExisting, "", productId, allowLegacyProxyValue);
+  }
+
+  if (safeExisting && !isProductImageApiPath(safeExisting, productId) && !safe) {
+    return normalizePersistedProductImage(safeExisting, "", productId, allowLegacyProxyValue);
+  }
+
+  if (safeExisting && (isHttpImageUrl(safeExisting) || isDataImageUrl(safeExisting) || parseStaticProductImagePath(safeExisting))) {
+    return normalizePersistedProductImage(safeExisting, "", productId, allowLegacyProxyValue);
+  }
+
+  return safe;
+}
+
+function buildProductImageResponseFromValue(productId, imageValue) {
+  const safeProductId = safeString(productId).slice(0, 120);
+  if (!safeProductId) {
+    return null;
+  }
+
+  const safeImageValue = safeString(imageValue);
+  if (!safeImageValue || isProductImageApiPath(safeImageValue, safeProductId)) {
+    return null;
+  }
+
+  if (isHttpImageUrl(safeImageValue)) {
+    return {
+      kind: "redirect",
+      location: safeImageValue
+    };
+  }
+
+  const staticPath = parseStaticProductImagePath(safeImageValue);
+  if (staticPath) {
+    return {
+      kind: "redirect",
+      location: staticPath
+    };
+  }
+
+  const dataUrlMatch = safeImageValue.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i);
+  if (!dataUrlMatch) {
+    return null;
+  }
+
+  const contentType = safeString(dataUrlMatch[1]).toLowerCase() || "image/jpeg";
+  const base64Payload = dataUrlMatch[2] || "";
+  const body = Buffer.from(base64Payload, "base64");
+  return {
+    kind: "binary",
+    contentType,
+    body,
+    etag: buildWeakEtagFromString(safeImageValue)
+  };
+}
+
+function extractValidProductImageFromStoreData(data, productId) {
+  const safeProductId = safeString(productId).slice(0, 120);
+  if (!safeProductId) {
+    return "";
+  }
+
+  const safeData = validateStoreData(data);
+  const product = Array.isArray(safeData.products)
+    ? safeData.products.find((item) => safeString(item && item.id) === safeProductId)
+    : null;
+
+  if (!product) {
+    return "";
+  }
+
+  const image = normalizePersistedProductImage(product.image, "", safeProductId, false);
+  if (!image || isProductImageApiPath(image, safeProductId)) {
+    return "";
+  }
+
+  return isRenderableProductImageValue(image, safeProductId) ? image : "";
+}
+
 function getProductPublishedReviewsCount(product) {
   return Array.isArray(product && product.reviews) ? product.reviews.length : 0;
 }
@@ -1343,33 +1511,75 @@ function getCachedProductImageResponse(data, productId) {
     return null;
   }
 
-  const imageValue = safeString(product.image);
-  if (!imageValue) {
+  const imageValue = normalizePersistedProductImage(product.image, "", safeProductId, true);
+  const value = buildProductImageResponseFromValue(safeProductId, imageValue);
+  if (!value) {
     return null;
   }
 
-  if (/^https?:\/\//i.test(imageValue)) {
-    return setLruCacheEntry(derivedResponseCache.productImages, safeProductId, {
-      kind: "redirect",
-      location: imageValue
-    }, PRODUCT_IMAGE_CACHE_MAX_ENTRIES);
-  }
-
-  const dataUrlMatch = imageValue.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i);
-  if (!dataUrlMatch) {
-    return null;
-  }
-
-  const contentType = safeString(dataUrlMatch[1]).toLowerCase() || "image/jpeg";
-  const base64Payload = dataUrlMatch[2] || "";
-  const body = Buffer.from(base64Payload, "base64");
-  const value = {
-    kind: "binary",
-    contentType,
-    body,
-    etag: buildWeakEtagFromString(imageValue)
-  };
   return setLruCacheEntry(derivedResponseCache.productImages, safeProductId, value, PRODUCT_IMAGE_CACHE_MAX_ENTRIES);
+}
+
+async function getHistoricalProductImageResponse(productId) {
+  const safeProductId = safeString(productId).slice(0, 120);
+  if (!safeProductId || !storeRepository || typeof storeRepository.findHistoricalProductImage !== "function") {
+    return null;
+  }
+
+  const historicalImage = await storeRepository.findHistoricalProductImage(safeProductId);
+  if (!historicalImage) {
+    return null;
+  }
+
+  const value = buildProductImageResponseFromValue(safeProductId, historicalImage);
+  if (!value) {
+    return null;
+  }
+
+  return setLruCacheEntry(derivedResponseCache.productImages, safeProductId, value, PRODUCT_IMAGE_CACHE_MAX_ENTRIES);
+}
+
+async function repairBrokenProductImagesFromHistory(repository) {
+  if (!repository || typeof repository.read !== "function" || typeof repository.write !== "function" || typeof repository.findHistoricalProductImage !== "function") {
+    return { repaired: 0, skipped: 0 };
+  }
+
+  const currentData = await repository.read();
+  const safeData = validateStoreData(currentData);
+  const nextData = cloneData(safeData);
+  let repaired = 0;
+  let skipped = 0;
+
+  for (const product of nextData.products) {
+    const productId = safeString(product && product.id).slice(0, 120);
+    if (!productId) {
+      skipped += 1;
+      continue;
+    }
+
+    const currentImage = normalizePersistedProductImage(product.image, "", productId, true);
+    if (currentImage && !isProductImageApiPath(currentImage, productId) && isRenderableProductImageValue(currentImage, productId)) {
+      continue;
+    }
+
+    const historicalImage = await repository.findHistoricalProductImage(productId);
+    if (!historicalImage) {
+      skipped += 1;
+      continue;
+    }
+
+    product.image = historicalImage;
+    repaired += 1;
+  }
+
+  if (repaired > 0) {
+    await repository.write(nextData, {
+      previousPayload: safeData,
+      source: "product_image_auto_repair"
+    });
+  }
+
+  return { repaired, skipped };
 }
 
 function getStoreDataForRequest(req, data) {
@@ -1460,11 +1670,15 @@ function sanitizeIncomingAdminProduct(rawProduct, existingProduct) {
   const name = safeString(rawProduct.name).slice(0, 160);
   const brand = safeString(rawProduct.brand).slice(0, 160);
   const description = String(rawProduct.description || "").trim().slice(0, 6000);
-  const image = safeString(rawProduct.image).slice(0, 2 * 1024 * 1024);
+  const rawImage = rawProduct.image !== undefined
+    ? rawProduct.image
+    : (safeExisting && safeExisting.image);
+  const image = normalizePersistedProductImage(rawImage, safeExisting && safeExisting.image, id, Boolean(safeExisting));
   const gender = normalizeProductGender(rawProduct.gender || (safeExisting && safeExisting.gender));
   const bottleType = normalizeProductBottleType(rawProduct.bottleType || (safeExisting && safeExisting.bottleType));
 
-  if (!id || !name || !brand || !image) {
+  const allowLegacyProxyImage = Boolean(safeExisting) && isProductImageApiPath(image, id);
+  if (!id || !name || !brand || !image || (!allowLegacyProxyImage && !isRenderableProductImageValue(image, id))) {
     throw new Error("INVALID_PRODUCT_PAYLOAD");
   }
 
@@ -2488,10 +2702,17 @@ async function handleProductImageApi(req, res, requestUrl) {
   }
 
   const data = await storeRepository.read();
-  const imageResponse = getCachedProductImageResponse(data, productId);
+  let imageResponse = getCachedProductImageResponse(data, productId);
+  if (!imageResponse) {
+    imageResponse = await getHistoricalProductImageResponse(productId);
+  }
 
   if (!imageResponse) {
-    sendText(res, 404, "Not Found");
+    res.writeHead(302, {
+      "Location": "/assets/product-placeholder.svg",
+      "Cache-Control": "public, max-age=300"
+    });
+    res.end();
     return;
   }
 

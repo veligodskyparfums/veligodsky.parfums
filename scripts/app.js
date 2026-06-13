@@ -35,6 +35,7 @@
   var PRODUCT_REVIEW_PANELS_KEY = "veligodsky_product_review_panels_v1";
   var REVIEW_PRIVACY_CONSENT_VERSION = "privacy-v1-2026-04-08";
   var REVIEW_TERMS_CONSENT_VERSION = "terms-v2-2026-04-09";
+  var PRODUCT_PLACEHOLDER_IMAGE = "/assets/product-placeholder.svg";
 
   var state = {
     products: [],
@@ -77,6 +78,7 @@
 
   async function init() {
     cacheElements();
+    bindImageFallbacks();
     decorateTelegramButtons();
     if (typeof store.init === "function") {
       await store.init({ skipRemote: true });
@@ -221,6 +223,32 @@
     elements.heroBg = document.getElementById("heroBg");
     elements.backupNotice = document.getElementById("backupNotice");
     elements.yearNow = document.getElementById("yearNow");
+  }
+
+  function bindImageFallbacks() {
+    if (document.documentElement.dataset.productImageFallbackBound === "1") {
+      return;
+    }
+
+    document.documentElement.dataset.productImageFallbackBound = "1";
+    document.addEventListener("error", function (event) {
+      var target = event && event.target;
+      if (!target || target.tagName !== "IMG") {
+        return;
+      }
+
+      var fallback = String(target.getAttribute("data-fallback-image") || "").trim();
+      if (!fallback) {
+        return;
+      }
+
+      if (target.dataset.fallbackApplied === "1") {
+        return;
+      }
+
+      target.dataset.fallbackApplied = "1";
+      target.src = fallback;
+    }, true);
   }
 
   function decorateTelegramButtons() {
@@ -1292,7 +1320,7 @@
     return ""
       + "<article class=\"" + cardClasses + "\" data-product-id=\"" + escapeHtml(product.id) + "\" data-mode=\"" + escapeHtml(config.mode) + "\">"
       + "  <div class=\"product-image-wrap\">"
-      + "    <img loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(product.image) + "\" alt=\"" + escapeHtml(product.name) + "\">"
+      + "    <img loading=\"lazy\" decoding=\"async\" data-fallback-image=\"" + escapeHtml(PRODUCT_PLACEHOLDER_IMAGE) + "\" src=\"" + escapeHtml(product.image) + "\" alt=\"" + escapeHtml(product.name) + "\">"
       + topLabel
       + "  </div>"
       + "  <div class=\"product-content\">"
