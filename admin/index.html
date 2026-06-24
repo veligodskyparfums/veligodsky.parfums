@@ -154,6 +154,117 @@
       </section>
 
       <section class="admin-section">
+        <h2 id="aiDraftEditorTitle">AI Черновики</h2>
+        <form id="aiDraftForm" class="admin-form">
+          <input type="hidden" id="aiDraftIdInput">
+
+          <div class="admin-grid">
+            <label class="field">
+              <span>Источник</span>
+              <select id="aiDraftSourceInput">
+                <option value="manual-test">manual-test</option>
+                <option value="telegram">telegram</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Статус</span>
+              <select id="aiDraftStatusInput">
+                <option value="pending">pending</option>
+                <option value="needs_review">needs_review</option>
+                <option value="ready_to_publish">ready_to_publish</option>
+                <option value="rejected">rejected</option>
+                <option value="published">published</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Бренд</span>
+              <input type="text" id="aiDraftBrandInput" placeholder="Например, Creed">
+            </label>
+
+            <label class="field">
+              <span>Название</span>
+              <input type="text" id="aiDraftNameInput" placeholder="Например, Aventus">
+            </label>
+
+            <label class="field">
+              <span>Ссылка на источник</span>
+              <input type="url" id="aiDraftSourceUrlInput" placeholder="https://...">
+            </label>
+
+            <label class="field">
+              <span>Confidence score</span>
+              <input type="number" id="aiDraftConfidenceInput" min="0" max="100" step="0.01" placeholder="0">
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Raw text</span>
+            <textarea id="aiDraftRawTextInput" rows="4" placeholder="Сырой текст поста, заметки или описание для теста"></textarea>
+          </label>
+
+          <label class="field">
+            <span>Описание</span>
+            <textarea id="aiDraftDescriptionInput" rows="4" placeholder="Описание будущего товара"></textarea>
+          </label>
+
+          <label class="field">
+            <span>Анализ AI (JSON)</span>
+            <textarea id="aiDraftAnalysisInput" rows="8" placeholder='{"brand":"Parfums de Marly","name":"Althair","gender":"unisex","confidence":0.96}'></textarea>
+          </label>
+
+          <label class="field">
+            <span>Заметки (по одной строке)</span>
+            <textarea id="aiDraftNotesInput" rows="3" placeholder="Например: нужна новая обложка&#10;проверить цену 50 мл"></textarea>
+          </label>
+
+          <label class="field">
+            <span>Фото черновика</span>
+            <input type="file" id="aiDraftImageInput" accept="image/*">
+          </label>
+
+          <div class="image-preview-wrap">
+            <img id="aiDraftImagePreview" class="image-preview hidden" alt="Предпросмотр фото AI-черновика" src="">
+          </div>
+
+          <div class="volume-block">
+            <div class="volume-header">
+              <h3>Объёмы и цены для публикации</h3>
+              <button type="button" class="btn btn-ghost" id="aiDraftAddVolumeBtn">Добавить объём</button>
+            </div>
+            <div id="aiDraftVolumesContainer" class="volumes-container"></div>
+          </div>
+
+          <div class="editor-actions">
+            <button class="btn btn-primary" type="submit">Сохранить AI-черновик</button>
+            <button class="btn btn-ghost" type="button" id="aiDraftFillTestBtn">Заполнить тестовый черновик</button>
+            <button class="btn btn-ghost" type="button" id="aiDraftResetBtn">Очистить форму</button>
+          </div>
+        </form>
+
+        <div class="admin-grid admin-grid--draft-insights">
+          <div class="admin-subsection admin-subsection--panel">
+            <h3>Предпросмотр будущей карточки товара</h3>
+            <div class="admin-catalog-meta" id="aiDraftSelectionMeta">Выберите черновик или заполните форму — здесь появится карточка товара.</div>
+            <div id="aiDraftLivePreview" class="ai-draft-live-preview"></div>
+          </div>
+
+          <div class="admin-subsection admin-subsection--panel">
+            <h3>Анализ AI</h3>
+            <div class="admin-catalog-meta">Здесь отображается JSON результата анализа для проверки будущей интеграции Telegram и OpenAI.</div>
+            <pre id="aiDraftAnalysisPreview" class="ai-draft-analysis-json">{}</pre>
+          </div>
+        </div>
+
+        <div class="admin-subsection">
+          <h3>Список AI-черновиков</h3>
+          <div class="admin-catalog-meta" id="adminAiDraftsMeta">Загрузка AI-черновиков...</div>
+          <div id="adminAiDraftsList" class="admin-products"></div>
+        </div>
+      </section>
+
+      <section class="admin-section">
         <h2>Каталог</h2>
         <div class="admin-catalog-tools">
           <label class="field admin-catalog-search">
