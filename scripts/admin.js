@@ -28,11 +28,16 @@
   var CATALOG_PREFETCH_DELAY_MS = 650;
   var SEARCH_INPUT_DEBOUNCE_MS = 160;
   var EDITOR_DRAFT_SAVE_DEBOUNCE_MS = 180;
+  var PRODUCT_PLACEHOLDER_IMAGE = "/assets/product-placeholder.svg";
 
   var state = {
     editingId: null,
     imageData: "",
     heroImageData: "",
+    aiDraftEditingId: null,
+    aiDraftOpenedId: "",
+    aiDraftImageData: "",
+    aiDrafts: [],
     draftMemory: null,
     homepageReviewEditingId: null,
     catalogSearchQuery: "",
@@ -53,6 +58,11 @@
       history: [],
       lastLevel: "ok",
       lastToastAt: 0
+    },
+    imageIntegrityMonitor: {
+      inFlight: false,
+      lastLevel: "ok",
+      lastToastAt: 0
     }
   };
 
@@ -69,6 +79,7 @@
 
   async function init() {
     cacheElements();
+    bindImageFallbacks();
     bindEvents();
     checkAuth();
 
@@ -120,6 +131,31 @@
     elements.volumesContainer = document.getElementById("volumesContainer");
     elements.cancelEditBtn = document.getElementById("cancelEditBtn");
 
+    elements.aiDraftForm = document.getElementById("aiDraftForm");
+    elements.aiDraftEditorTitle = document.getElementById("aiDraftEditorTitle");
+    elements.aiDraftIdInput = document.getElementById("aiDraftIdInput");
+    elements.aiDraftSourceInput = document.getElementById("aiDraftSourceInput");
+    elements.aiDraftStatusInput = document.getElementById("aiDraftStatusInput");
+    elements.aiDraftSourceUrlInput = document.getElementById("aiDraftSourceUrlInput");
+    elements.aiDraftBrandInput = document.getElementById("aiDraftBrandInput");
+    elements.aiDraftNameInput = document.getElementById("aiDraftNameInput");
+    elements.aiDraftConfidenceInput = document.getElementById("aiDraftConfidenceInput");
+    elements.aiDraftRawTextInput = document.getElementById("aiDraftRawTextInput");
+    elements.aiDraftDescriptionInput = document.getElementById("aiDraftDescriptionInput");
+    elements.aiDraftAnalysisInput = document.getElementById("aiDraftAnalysisInput");
+    elements.aiDraftNotesInput = document.getElementById("aiDraftNotesInput");
+    elements.aiDraftImageInput = document.getElementById("aiDraftImageInput");
+    elements.aiDraftImagePreview = document.getElementById("aiDraftImagePreview");
+    elements.aiDraftAddVolumeBtn = document.getElementById("aiDraftAddVolumeBtn");
+    elements.aiDraftVolumesContainer = document.getElementById("aiDraftVolumesContainer");
+    elements.aiDraftFillTestBtn = document.getElementById("aiDraftFillTestBtn");
+    elements.aiDraftResetBtn = document.getElementById("aiDraftResetBtn");
+    elements.adminAiDraftsMeta = document.getElementById("adminAiDraftsMeta");
+    elements.adminAiDraftsList = document.getElementById("adminAiDraftsList");
+    elements.aiDraftSelectionMeta = document.getElementById("aiDraftSelectionMeta");
+    elements.aiDraftLivePreview = document.getElementById("aiDraftLivePreview");
+    elements.aiDraftAnalysisPreview = document.getElementById("aiDraftAnalysisPreview");
+
     elements.adminProductsList = document.getElementById("adminProductsList");
     elements.adminCatalogSearchInput = document.getElementById("adminCatalogSearchInput");
     elements.adminCatalogSearchClearBtn = document.getElementById("adminCatalogSearchClearBtn");
@@ -140,6 +176,37 @@
     elements.capacityStatus = null;
     elements.capacityMeta = null;
     elements.capacityRefreshBtn = null;
+    elements.imageIntegrityMonitor = null;
+    elements.imageIntegrityStatus = null;
+    elements.imageIntegrityMeta = null;
+    elements.imageIntegrityRefreshBtn = null;
+    elements.imageIntegrityRepairBtn = null;
+  }
+
+  function bindImageFallbacks() {
+    if (document.documentElement.dataset.adminProductImageFallbackBound === "1") {
+      return;
+    }
+
+    document.documentElement.dataset.adminProductImageFallbackBound = "1";
+    document.addEventListener("error", function (event) {
+      var target = event && event.target;
+      if (!target || target.tagName !== "IMG") {
+        return;
+      }
+
+      var fallback = String(target.getAttribute("data-fallback-image") || "").trim();
+      if (!fallback) {
+        return;
+      }
+
+      if (target.dataset.fallbackApplied === "1") {
+        return;
+      }
+
+      target.dataset.fallbackApplied = "1";
+      target.src = fallback;
+    }, true);
   }
 
   function bindEvents() {
@@ -183,6 +250,45 @@
     elements.cancelEditBtn.addEventListener("click", resetEditor);
     elements.perfumeForm.addEventListener("input", scheduleEditorDraftSave);
     elements.perfumeForm.addEventListener("change", scheduleEditorDraftSave);
+
+    if (elements.aiDraftAddVolumeBtn) {
+      elements.aiDraftAddVolumeBtn.addEventListener("click", function () {
+        appendAiDraftVolumeRow();
+      });
+    }
+    if (elements.aiDraftVolumesContainer) {
+      elements.aiDraftVolumesContainer.addEventListener("click", function (event) {
+        var removeAiButton = event.target.closest(".remove-volume-btn");
+        if (!removeAiButton) {
+          return;
+        }
+        var aiRow = removeAiButton.closest(".volume-row");
+        if (!aiRow) {
+          return;
+        }
+        aiRow.remove();
+        if (!elements.aiDraftVolumesContainer.children.length) {
+          appendAiDraftVolumeRow();
+        }
+      });
+    }
+    if (elements.aiDraftImageInput) {
+      elements.aiDraftImageInput.addEventListener("change", handleAiDraftImageUpload);
+    }
+    if (elements.aiDraftForm) {
+      elements.aiDraftForm.addEventListener("submit", saveAiDraft);
+      elements.aiDraftForm.addEventListener("input", renderAiDraftInsights);
+      elements.aiDraftForm.addEventListener("change", renderAiDraftInsights);
+    }
+    if (elements.aiDraftFillTestBtn) {
+      elements.aiDraftFillTestBtn.addEventListener("click", fillAiDraftWithTestData);
+    }
+    if (elements.aiDraftResetBtn) {
+      elements.aiDraftResetBtn.addEventListener("click", resetAiDraftEditor);
+    }
+    if (elements.adminAiDraftsList) {
+      elements.adminAiDraftsList.addEventListener("click", onAiDraftListClick);
+    }
 
     elements.adminProductsList.addEventListener("click", onProductListClick);
     elements.adminProductsList.addEventListener("change", onProductListChange);
@@ -248,6 +354,7 @@
     elements.loginView.classList.add("hidden");
     elements.panelView.classList.remove("hidden");
     ensureCapacityMonitorElements();
+    ensureImageIntegrityMonitorElements();
     startCapacityMonitor();
     refreshPanel();
     refreshPanelFromServer(false);
@@ -263,10 +370,15 @@
 
   function refreshPanel() {
     fillSettingsForm();
+    ensureImageIntegrityMonitorElements();
+    resetAiDraftEditor();
+    renderAiDrafts();
     resetCatalogState();
     renderProducts();
     loadCatalogPage({ reset: true, showErrorToast: false });
+    loadAiDrafts(false);
     renderHomepageReviews();
+    runImageIntegrityCheck(false);
     if (!state.homepageReviewEditingId) {
       resetHomepageReviewEditor();
     }
@@ -292,6 +404,7 @@
       }
     }
     fillSettingsForm();
+    await loadAiDrafts(showErrorToast);
     renderHomepageReviews();
     if (!state.homepageReviewEditingId) {
       resetHomepageReviewEditor();
@@ -299,6 +412,7 @@
     if (!restoreEditorFromDraft()) {
       resetEditor({ keepDraft: true });
     }
+    runImageIntegrityCheck(false);
     await loadCatalogPage({ reset: true, showErrorToast: showErrorToast });
   }
 
@@ -582,12 +696,23 @@
     return row;
   }
 
-  function appendVolumeRow(volume) {
-    elements.volumesContainer.appendChild(createVolumeRow(volume));
+  function appendVolumeRowTo(container, volume) {
+    if (!container) {
+      return;
+    }
+    container.appendChild(createVolumeRow(volume));
   }
 
-  function collectVolumes() {
-    var rows = Array.prototype.slice.call(elements.volumesContainer.querySelectorAll(".volume-row"));
+  function appendVolumeRow(volume) {
+    appendVolumeRowTo(elements.volumesContainer, volume);
+  }
+
+  function appendAiDraftVolumeRow(volume) {
+    appendVolumeRowTo(elements.aiDraftVolumesContainer, volume);
+  }
+
+  function collectVolumesFrom(container) {
+    var rows = Array.prototype.slice.call((container || document).querySelectorAll(".volume-row"));
     var volumes = rows.map(function (row) {
       var mlInput = row.querySelector(".volume-ml");
       var priceInput = row.querySelector(".volume-price");
@@ -614,6 +739,14 @@
     });
 
     return Array.from(uniqueMap.values());
+  }
+
+  function collectVolumes() {
+    return collectVolumesFrom(elements.volumesContainer);
+  }
+
+  function collectAiDraftVolumes() {
+    return collectVolumesFrom(elements.aiDraftVolumesContainer);
   }
 
   function cloneDraft(value) {
@@ -1013,6 +1146,57 @@
     setImagePreview(elements.heroImagePreview, src);
   }
 
+  function setAiDraftPreviewImage(src) {
+    setImagePreview(elements.aiDraftImagePreview, src);
+  }
+
+  async function handleAiDraftImageUpload() {
+    var file = elements.aiDraftImageInput.files && elements.aiDraftImageInput.files[0];
+    if (!file) {
+      return;
+    }
+
+    var fileType = String(file.type || "").toLowerCase();
+    if (!String(fileType).startsWith("image/")) {
+      showToast("Выберите файл изображения.", true);
+      elements.aiDraftImageInput.value = "";
+      return;
+    }
+
+    if (fileType.indexOf("heic") >= 0 || fileType.indexOf("heif") >= 0) {
+      showToast("Формат HEIC/HEIF не поддерживается. Сохраните фото как JPG/PNG.", true);
+      elements.aiDraftImageInput.value = "";
+      return;
+    }
+
+    if (file.size > MAX_UPLOAD_FILE_SIZE) {
+      showToast("Фото больше 12 МБ. Выберите файл поменьше.", true);
+      elements.aiDraftImageInput.value = "";
+      return;
+    }
+
+    var previousImageData = String(state.aiDraftImageData || "");
+    try {
+      var optimized = await optimizeImageForStore(file);
+      if (!optimized || optimized.length > MAX_IMAGE_DATA_LENGTH) {
+        throw new Error("IMAGE_TOO_LARGE");
+      }
+
+      state.aiDraftImageData = optimized;
+      setAiDraftPreviewImage(state.aiDraftImageData);
+      showToast("Фото черновика загружено");
+    } catch (error) {
+      state.aiDraftImageData = previousImageData;
+      setAiDraftPreviewImage(previousImageData);
+      elements.aiDraftImageInput.value = "";
+      if (error && error.message === "IMAGE_TOO_LARGE") {
+        showToast("Фото слишком тяжелое. Попробуйте другое изображение.", true);
+        return;
+      }
+      showToast("Не удалось обработать фото. Используйте JPG или PNG.", true);
+    }
+  }
+
   async function savePerfume(event) {
     event.preventDefault();
 
@@ -1109,6 +1293,713 @@
 
     if (!keepDraft) {
       clearEditorDraft();
+    }
+  }
+
+  function getAiDraftById(draftId) {
+    var safeDraftId = String(draftId || "").trim();
+    return (Array.isArray(state.aiDrafts) ? state.aiDrafts : []).find(function (draft) {
+      return String(draft && draft.id || "").trim() === safeDraftId;
+    }) || null;
+  }
+
+  function collectAiDraftNotes() {
+    return String(elements.aiDraftNotesInput && elements.aiDraftNotesInput.value || "")
+      .split(/\r?\n+/)
+      .map(function (note) {
+        return String(note || "").trim();
+      })
+      .filter(Boolean);
+  }
+
+  function getAiDraftStatusLabel(status) {
+    var safeStatus = String(status || "pending").trim().toLowerCase();
+    var labels = {
+      pending: "Ожидает",
+      needs_review: "Нужна проверка",
+      ready_to_publish: "Готов к публикации",
+      published: "Опубликован",
+      rejected: "Отклонён"
+    };
+    return labels[safeStatus] || safeStatus || "Ожидает";
+  }
+
+  function getAiDraftAnalysisValue(draft, keys) {
+    if (!draft || !draft.analysis || typeof draft.analysis !== "object" || !Array.isArray(keys)) {
+      return "";
+    }
+
+    for (var i = 0; i < keys.length; i += 1) {
+      var key = String(keys[i] || "").trim();
+      if (!key) {
+        continue;
+      }
+      var value = draft.analysis[key];
+      if (value !== undefined && value !== null && String(value).trim() !== "") {
+        return String(value).trim();
+      }
+    }
+
+    return "";
+  }
+
+  function getAiDraftPreviewGender(draft) {
+    var raw = getAiDraftAnalysisValue(draft, ["gender", "sex", "targetGender"]).toLowerCase();
+    if (!raw) {
+      return "unisex";
+    }
+    if (raw.indexOf("male") >= 0 || raw.indexOf("man") >= 0 || raw.indexOf("men") >= 0 || raw.indexOf("муж") >= 0) {
+      return "male";
+    }
+    if (raw.indexOf("female") >= 0 || raw.indexOf("woman") >= 0 || raw.indexOf("women") >= 0 || raw.indexOf("жен") >= 0) {
+      return "female";
+    }
+    return "unisex";
+  }
+
+  function getAiDraftPreviewBottleType(draft) {
+    var raw = getAiDraftAnalysisValue(draft, ["bottleType", "flaconType", "type"]).toLowerCase();
+    if (!raw) {
+      return "full";
+    }
+    if (raw.indexOf("decant") >= 0 || raw.indexOf("отлив") >= 0) {
+      return "decant";
+    }
+    if (raw.indexOf("tester") >= 0 || raw.indexOf("тестер") >= 0) {
+      return "tester";
+    }
+    return "full";
+  }
+
+  function serializeAiDraftAnalysis(analysis) {
+    if (!analysis || typeof analysis !== "object" || Array.isArray(analysis)) {
+      return "{}";
+    }
+    try {
+      return JSON.stringify(analysis, null, 2);
+    } catch (error) {
+      return "{}";
+    }
+  }
+
+  function parseAiDraftAnalysisInput() {
+    var raw = String(elements.aiDraftAnalysisInput && elements.aiDraftAnalysisInput.value || "").trim();
+    if (!raw) {
+      return null;
+    }
+
+    var parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      throw new Error("INVALID_AI_DRAFT_ANALYSIS_JSON");
+    }
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("INVALID_AI_DRAFT_ANALYSIS_JSON");
+    }
+
+    return parsed;
+  }
+
+  function buildAiDraftFallbackAnalysis(draft) {
+    var safeDraft = draft && typeof draft === "object" ? draft : {};
+    var firstVolume = Array.isArray(safeDraft.volumes) && safeDraft.volumes.length ? safeDraft.volumes[0] : null;
+    var confidenceValue = Number(safeDraft.confidenceScore || 0);
+    if (!Number.isFinite(confidenceValue)) {
+      confidenceValue = 0;
+    }
+
+    return {
+      brand: String(safeDraft.brand || "").trim(),
+      name: String(safeDraft.name || "").trim(),
+      volume: firstVolume ? formatMlValue(firstVolume.ml) + " ml" : "",
+      gender: getAiDraftPreviewGender(safeDraft),
+      bottleType: getAiDraftPreviewBottleType(safeDraft),
+      confidence: Math.max(0, Math.min(1, confidenceValue > 1 ? confidenceValue / 100 : confidenceValue))
+    };
+  }
+
+  function hasAiDraftFormContent() {
+    if (!elements.aiDraftForm) {
+      return false;
+    }
+    if (state.aiDraftEditingId || state.aiDraftImageData) {
+      return true;
+    }
+
+    var textFields = [
+      elements.aiDraftBrandInput,
+      elements.aiDraftNameInput,
+      elements.aiDraftSourceUrlInput,
+      elements.aiDraftRawTextInput,
+      elements.aiDraftDescriptionInput,
+      elements.aiDraftAnalysisInput,
+      elements.aiDraftNotesInput,
+      elements.aiDraftConfidenceInput
+    ];
+
+    var hasText = textFields.some(function (field) {
+      return String(field && field.value || "").trim() !== "";
+    });
+    if (hasText) {
+      return true;
+    }
+
+    return collectAiDraftVolumes().length > 0;
+  }
+
+  function buildAiDraftFromForm(options) {
+    var safeOptions = options && typeof options === "object" ? options : {};
+    var analysis = null;
+    var analysisError = "";
+
+    try {
+      analysis = parseAiDraftAnalysisInput();
+    } catch (error) {
+      if (!safeOptions.ignoreInvalidAnalysis) {
+        throw error;
+      }
+      analysisError = String(error && error.message || "INVALID_AI_DRAFT_ANALYSIS_JSON");
+    }
+
+    return {
+      id: String(elements.aiDraftIdInput && elements.aiDraftIdInput.value || "").trim() || String(safeOptions.id || "").trim(),
+      source: String(elements.aiDraftSourceInput && elements.aiDraftSourceInput.value || "manual-test").trim(),
+      status: String(elements.aiDraftStatusInput && elements.aiDraftStatusInput.value || "pending").trim(),
+      sourceUrl: String(elements.aiDraftSourceUrlInput && elements.aiDraftSourceUrlInput.value || "").trim(),
+      rawText: String(elements.aiDraftRawTextInput && elements.aiDraftRawTextInput.value || "").trim(),
+      brand: String(elements.aiDraftBrandInput && elements.aiDraftBrandInput.value || "").trim(),
+      name: String(elements.aiDraftNameInput && elements.aiDraftNameInput.value || "").trim(),
+      description: String(elements.aiDraftDescriptionInput && elements.aiDraftDescriptionInput.value || "").trim(),
+      image: String(state.aiDraftImageData || "").trim(),
+      volumes: collectAiDraftVolumes(),
+      notes: collectAiDraftNotes(),
+      analysis: analysis,
+      confidenceScore: Number(elements.aiDraftConfidenceInput && elements.aiDraftConfidenceInput.value || 0),
+      createdAt: String(safeOptions.createdAt || "").trim(),
+      updatedAt: String(safeOptions.updatedAt || "").trim(),
+      _analysisError: analysisError
+    };
+  }
+
+  function buildAiDraftPreviewMarkup(draft) {
+    var safeDraft = draft && typeof draft === "object" ? draft : {};
+    var safeName = safeDraft.name || "Название аромата";
+    var safeBrand = safeDraft.brand || "Бренд";
+    var description = safeDraft.description || "Описание пока не заполнено.";
+    var volumes = Array.isArray(safeDraft.volumes) ? safeDraft.volumes : [];
+    var minPrice = volumes.length
+      ? volumes.reduce(function (minValue, item) {
+          return item.price < minValue ? item.price : minValue;
+        }, Number.MAX_SAFE_INTEGER)
+      : 0;
+    var brandLine = [
+      safeBrand,
+      store.getGenderLabel(getAiDraftPreviewGender(safeDraft)),
+      store.getBottleTypeLabel(getAiDraftPreviewBottleType(safeDraft))
+    ].filter(Boolean).join(" • ");
+    var volumeOptions = volumes.length
+      ? volumes.map(function (item) {
+          return "<option>" + escapeHtml(formatMlValue(item.ml) + " ml - " + store.formatPrice(item.price)) + "</option>";
+        }).join("")
+      : "<option>Объёмы ещё не добавлены</option>";
+    var previewImage = safeDraft.image
+      ? "<img loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(safeDraft.image) + "\" alt=\"" + escapeHtml(safeName) + "\">"
+      : "<div class=\"ai-draft-preview-image-empty\">Фото черновика</div>";
+
+    return ""
+      + "<div class=\"ai-draft-preview-shell\">"
+      + "  <article class=\"product-card ai-draft-preview-card\">"
+      + "    <div class=\"product-image-wrap\">"
+      + "      " + previewImage
+      + "      <span class=\"top-badge\">" + escapeHtml(getAiDraftStatusLabel(safeDraft.status)) + "</span>"
+      + "    </div>"
+      + "    <div class=\"product-content\">"
+      + "      <h3 class=\"product-name\">" + escapeHtml(safeName) + "</h3>"
+      + "      <p class=\"product-brand\">" + escapeHtml(brandLine) + "</p>"
+      + "      <p class=\"product-description is-expanded\">" + escapeHtml(description) + "</p>"
+      + "      <div class=\"volume-line\">"
+      + "        <span>Цена от:</span>"
+      + "        <strong>" + escapeHtml(minPrice > 0 ? store.formatPrice(minPrice) : "—") + "</strong>"
+      + "      </div>"
+      + "      <label class=\"field\">"
+      + "        <span>Объём</span>"
+      + "        <select disabled>" + volumeOptions + "</select>"
+      + "      </label>"
+      + "      <button class=\"btn btn-primary full-width\" type=\"button\" disabled>После публикации появится кнопка «В корзину»</button>"
+      + "    </div>"
+      + "  </article>"
+      + "</div>";
+  }
+
+  function renderAiDraftInsights() {
+    if (!elements.aiDraftLivePreview || !elements.aiDraftAnalysisPreview) {
+      return;
+    }
+
+    var selectedDraft = getAiDraftById(state.aiDraftOpenedId);
+    var previewDraft = null;
+
+    if (hasAiDraftFormContent()) {
+      previewDraft = buildAiDraftFromForm({
+        ignoreInvalidAnalysis: true,
+        id: selectedDraft && selectedDraft.id,
+        createdAt: selectedDraft && selectedDraft.createdAt,
+        updatedAt: selectedDraft && selectedDraft.updatedAt
+      });
+    } else if (selectedDraft) {
+      previewDraft = selectedDraft;
+    }
+
+    if (!previewDraft) {
+      if (elements.aiDraftSelectionMeta) {
+        elements.aiDraftSelectionMeta.textContent = "Выберите черновик или заполните форму — здесь появится карточка товара.";
+      }
+      elements.aiDraftLivePreview.innerHTML = "<div class=\"empty-state\">Предпросмотр появится после выбора черновика или ввода данных.</div>";
+      elements.aiDraftAnalysisPreview.textContent = "{}";
+      elements.aiDraftAnalysisPreview.classList.remove("ai-draft-analysis-json--error");
+      return;
+    }
+
+    var metaParts = [];
+    if (previewDraft.id) {
+      metaParts.push("ID: " + previewDraft.id);
+    }
+    metaParts.push("Статус: " + getAiDraftStatusLabel(previewDraft.status));
+    if (previewDraft.confidenceScore || previewDraft.confidenceScore === 0) {
+      metaParts.push("Confidence: " + String(previewDraft.confidenceScore));
+    }
+    if (previewDraft.createdAt) {
+      metaParts.push("Создан: " + formatReviewDate(previewDraft.createdAt));
+    }
+    if (elements.aiDraftSelectionMeta) {
+      elements.aiDraftSelectionMeta.textContent = metaParts.join(" • ");
+    }
+
+    elements.aiDraftLivePreview.innerHTML = buildAiDraftPreviewMarkup(previewDraft);
+
+    if (previewDraft._analysisError) {
+      elements.aiDraftAnalysisPreview.textContent = "Ошибка JSON: проверьте формат анализа AI.";
+      elements.aiDraftAnalysisPreview.classList.add("ai-draft-analysis-json--error");
+      return;
+    }
+
+    elements.aiDraftAnalysisPreview.textContent = serializeAiDraftAnalysis(previewDraft.analysis || buildAiDraftFallbackAnalysis(previewDraft));
+    elements.aiDraftAnalysisPreview.classList.remove("ai-draft-analysis-json--error");
+  }
+
+  function fillAiDraftWithTestData() {
+    if (elements.aiDraftSourceInput) {
+      elements.aiDraftSourceInput.value = "manual-test";
+    }
+    if (elements.aiDraftStatusInput) {
+      elements.aiDraftStatusInput.value = "ready_to_publish";
+    }
+    if (elements.aiDraftBrandInput) {
+      elements.aiDraftBrandInput.value = "Parfums de Marly";
+    }
+    if (elements.aiDraftNameInput) {
+      elements.aiDraftNameInput.value = "Althair";
+    }
+    if (elements.aiDraftDescriptionInput) {
+      elements.aiDraftDescriptionInput.value = "Тестовый товар для проверки AI Drafts.";
+    }
+    if (elements.aiDraftRawTextInput) {
+      elements.aiDraftRawTextInput.value = "Parfums de Marly Althair 125 ml. Тестовый импорт черновика.";
+    }
+    if (elements.aiDraftSourceUrlInput) {
+      elements.aiDraftSourceUrlInput.value = "";
+    }
+    if (elements.aiDraftConfidenceInput) {
+      elements.aiDraftConfidenceInput.value = "96";
+    }
+    if (elements.aiDraftNotesInput) {
+      elements.aiDraftNotesInput.value = "Проверить сценарий публикации\nПроверить фото товара";
+    }
+    if (elements.aiDraftAnalysisInput) {
+      elements.aiDraftAnalysisInput.value = JSON.stringify({
+        brand: "Parfums de Marly",
+        name: "Althair",
+        volume: "125 ml",
+        gender: "unisex",
+        confidence: 0.96
+      }, null, 2);
+    }
+    if (elements.aiDraftVolumesContainer) {
+      elements.aiDraftVolumesContainer.innerHTML = "";
+      appendAiDraftVolumeRow({ ml: "125", price: "16500" });
+    }
+    renderAiDraftInsights();
+    showToast("Тестовый AI-черновик заполнен");
+  }
+
+  function resetAiDraftEditor() {
+    state.aiDraftEditingId = null;
+    state.aiDraftImageData = "";
+
+    if (elements.aiDraftEditorTitle) {
+      elements.aiDraftEditorTitle.textContent = "AI Черновики";
+    }
+    if (elements.aiDraftIdInput) {
+      elements.aiDraftIdInput.value = "";
+    }
+    if (elements.aiDraftForm) {
+      elements.aiDraftForm.reset();
+    }
+    if (elements.aiDraftSourceInput) {
+      elements.aiDraftSourceInput.value = "manual-test";
+    }
+    if (elements.aiDraftStatusInput) {
+      elements.aiDraftStatusInput.value = "pending";
+    }
+    if (elements.aiDraftAnalysisInput) {
+      elements.aiDraftAnalysisInput.value = "";
+    }
+    if (elements.aiDraftVolumesContainer) {
+      elements.aiDraftVolumesContainer.innerHTML = "";
+      appendAiDraftVolumeRow({ ml: "", price: "" });
+    }
+    if (elements.aiDraftImageInput) {
+      elements.aiDraftImageInput.value = "";
+    }
+    setAiDraftPreviewImage("");
+    renderAiDraftInsights();
+  }
+
+  function fillAiDraftForm(draft) {
+    if (!draft) {
+      return;
+    }
+
+    state.aiDraftEditingId = draft.id;
+    state.aiDraftOpenedId = draft.id;
+    state.aiDraftImageData = draft.image || "";
+    if (elements.aiDraftEditorTitle) {
+      elements.aiDraftEditorTitle.textContent = "Редактировать AI-черновик";
+    }
+    if (elements.aiDraftIdInput) {
+      elements.aiDraftIdInput.value = draft.id;
+    }
+    if (elements.aiDraftSourceInput) {
+      elements.aiDraftSourceInput.value = draft.source || "manual-test";
+    }
+    if (elements.aiDraftStatusInput) {
+      elements.aiDraftStatusInput.value = draft.status || "pending";
+    }
+    if (elements.aiDraftSourceUrlInput) {
+      elements.aiDraftSourceUrlInput.value = draft.sourceUrl || "";
+    }
+    if (elements.aiDraftBrandInput) {
+      elements.aiDraftBrandInput.value = draft.brand || "";
+    }
+    if (elements.aiDraftNameInput) {
+      elements.aiDraftNameInput.value = draft.name || "";
+    }
+    if (elements.aiDraftConfidenceInput) {
+      elements.aiDraftConfidenceInput.value = draft.confidenceScore || draft.confidenceScore === 0
+        ? String(draft.confidenceScore)
+        : "";
+    }
+    if (elements.aiDraftRawTextInput) {
+      elements.aiDraftRawTextInput.value = draft.rawText || "";
+    }
+    if (elements.aiDraftDescriptionInput) {
+      elements.aiDraftDescriptionInput.value = draft.description || "";
+    }
+    if (elements.aiDraftAnalysisInput) {
+      elements.aiDraftAnalysisInput.value = serializeAiDraftAnalysis(draft.analysis || buildAiDraftFallbackAnalysis(draft));
+    }
+    if (elements.aiDraftNotesInput) {
+      elements.aiDraftNotesInput.value = Array.isArray(draft.notes) ? draft.notes.join("\n") : "";
+    }
+    if (elements.aiDraftImageInput) {
+      elements.aiDraftImageInput.value = "";
+    }
+    setAiDraftPreviewImage(state.aiDraftImageData);
+
+    if (elements.aiDraftVolumesContainer) {
+      elements.aiDraftVolumesContainer.innerHTML = "";
+      if (Array.isArray(draft.volumes) && draft.volumes.length) {
+        draft.volumes.forEach(function (volume) {
+          appendAiDraftVolumeRow({ ml: volume.ml, price: volume.price });
+        });
+      } else {
+        appendAiDraftVolumeRow({ ml: "", price: "" });
+      }
+    }
+
+    renderAiDrafts();
+    renderAiDraftInsights();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function saveAiDraft(event) {
+    event.preventDefault();
+
+    var parsedAnalysis = null;
+    try {
+      parsedAnalysis = parseAiDraftAnalysisInput();
+    } catch (error) {
+      showToast("Анализ AI должен быть валидным JSON-объектом.", true);
+      return;
+    }
+
+    var payload = {
+      id: String(elements.aiDraftIdInput && elements.aiDraftIdInput.value || "").trim(),
+      source: String(elements.aiDraftSourceInput && elements.aiDraftSourceInput.value || "manual-test"),
+      status: String(elements.aiDraftStatusInput && elements.aiDraftStatusInput.value || "pending"),
+      sourceUrl: String(elements.aiDraftSourceUrlInput && elements.aiDraftSourceUrlInput.value || "").trim(),
+      rawText: String(elements.aiDraftRawTextInput && elements.aiDraftRawTextInput.value || "").trim(),
+      brand: String(elements.aiDraftBrandInput && elements.aiDraftBrandInput.value || "").trim(),
+      name: String(elements.aiDraftNameInput && elements.aiDraftNameInput.value || "").trim(),
+      description: String(elements.aiDraftDescriptionInput && elements.aiDraftDescriptionInput.value || "").trim(),
+      image: String(state.aiDraftImageData || "").trim(),
+      volumes: collectAiDraftVolumes(),
+      notes: collectAiDraftNotes(),
+      analysis: parsedAnalysis,
+      confidenceScore: Number(elements.aiDraftConfidenceInput && elements.aiDraftConfidenceInput.value || 0)
+    };
+
+    try {
+      var result = await store.upsertAdminAiDraft(payload);
+      await loadAiDrafts(false);
+      if (result && result.draft) {
+        fillAiDraftForm(result.draft);
+      }
+      showToast(result && result.created ? "AI-черновик создан" : "AI-черновик сохранён");
+    } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      showToast("Не удалось сохранить AI-черновик.", true);
+    }
+  }
+
+  async function loadAiDrafts(showErrorToast) {
+    if (!elements.adminAiDraftsList || typeof store.fetchAdminAiDrafts !== "function") {
+      return;
+    }
+
+    if (elements.adminAiDraftsMeta) {
+      elements.adminAiDraftsMeta.textContent = "Загрузка AI-черновиков...";
+    }
+
+    try {
+      var previousOpenedId = String(state.aiDraftOpenedId || "").trim();
+      state.aiDrafts = await store.fetchAdminAiDrafts();
+      if (previousOpenedId && getAiDraftById(previousOpenedId)) {
+        state.aiDraftOpenedId = previousOpenedId;
+      } else {
+        state.aiDraftOpenedId = state.aiDrafts.length ? String(state.aiDrafts[0].id || "") : "";
+      }
+      renderAiDrafts();
+      renderAiDraftInsights();
+    } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      state.aiDrafts = [];
+      state.aiDraftOpenedId = "";
+      renderAiDrafts();
+      renderAiDraftInsights();
+      if (showErrorToast) {
+        showToast("Не удалось загрузить AI-черновики.", true);
+      }
+    }
+  }
+
+  function buildAiDraftCardMarkup(draft) {
+    var draftId = String(draft && draft.id || "");
+    var safeStatus = String(draft && draft.status || "pending");
+    var volumesLine = (Array.isArray(draft && draft.volumes) ? draft.volumes : []).map(function (volume) {
+      return formatMlValue(volume.ml) + "ml - " + store.formatPrice(volume.price);
+    }).join(" | ");
+    var previewMarkup = draft && draft.image
+      ? "<img loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(draft.image) + "\" alt=\"" + escapeHtml(draft.name || draft.brand || "AI draft") + "\">"
+      : "<div class=\"admin-draft-thumb admin-draft-thumb--empty\">AI</div>";
+    var canPublish = safeStatus === "ready_to_publish";
+    var isPublished = safeStatus === "published";
+    var createdAtLabel = draft && draft.createdAt ? formatReviewDate(draft.createdAt) : "";
+    var confidenceText = draft && (draft.confidenceScore || draft.confidenceScore === 0)
+      ? String(draft.confidenceScore)
+      : "0";
+
+    return ""
+      + "<article class=\"admin-product-card admin-draft-card" + (draftId === state.aiDraftOpenedId ? " is-selected" : "") + "\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">"
+      + "  " + previewMarkup
+      + "  <div class=\"admin-product-body\">"
+      + "    <div class=\"admin-product-head\">"
+      + "      <div class=\"admin-product-title\">"
+      + "        <strong>" + escapeHtml(draft.name || "Без названия") + "</strong>"
+      + "        <span>" + escapeHtml(draft.brand || "Без бренда") + " | " + escapeHtml(draft.source || "manual-test") + "</span>"
+      + "      </div>"
+      + "      <div class=\"admin-product-actions\">"
+      + "        <span class=\"admin-draft-status admin-draft-status--" + escapeHtml(safeStatus) + "\">" + escapeHtml(getAiDraftStatusLabel(safeStatus)) + "</span>"
+      + "      </div>"
+      + "    </div>"
+      + "    <p class=\"meta-line\">Confidence score: " + escapeHtml(confidenceText) + "</p>"
+      + "    " + (draft.sourceUrl ? "<p class=\"meta-line\">Источник: " + escapeHtml(draft.sourceUrl) + "</p>" : "")
+      + "    " + (volumesLine ? "<p class=\"meta-line\">Объёмы: " + escapeHtml(volumesLine) + "</p>" : "<p class=\"meta-line\">Объёмы пока не заполнены</p>")
+      + "    <p class=\"meta-line\">Создан: " + escapeHtml(createdAtLabel || String(draft.createdAt || "")) + "</p>"
+      + "    <div class=\"admin-product-actions\">"
+      + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"open\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">Открыть</button>"
+      + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"edit\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">Редактировать</button>"
+      + "      <button class=\"btn btn-primary\" type=\"button\" data-ai-draft-action=\"publish\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\"" + (canPublish ? "" : " disabled") + ">" + (isPublished ? "Опубликован" : "Опубликовать") + "</button>"
+      + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"delete\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">Удалить</button>"
+      + "    </div>"
+      + "  </div>"
+      + "</article>";
+  }
+
+  function renderAiDrafts() {
+    if (!elements.adminAiDraftsList) {
+      return;
+    }
+
+    var drafts = Array.isArray(state.aiDrafts) ? state.aiDrafts : [];
+    var readyCount = drafts.filter(function (draft) {
+      return String(draft && draft.status || "") === "ready_to_publish";
+    }).length;
+    var reviewCount = drafts.filter(function (draft) {
+      return String(draft && draft.status || "") === "needs_review";
+    }).length;
+
+    if (elements.adminAiDraftsMeta) {
+      elements.adminAiDraftsMeta.textContent = "Всего: " + drafts.length + " • Готовы к публикации: " + readyCount + " • Нужна проверка: " + reviewCount;
+    }
+
+    if (!drafts.length) {
+      elements.adminAiDraftsList.innerHTML = "<div class=\"empty-state\">AI-черновиков пока нет. Создайте первый тестовый черновик вручную.</div>";
+      return;
+    }
+
+    elements.adminAiDraftsList.innerHTML = drafts.map(function (draft) {
+      return buildAiDraftCardMarkup(draft);
+    }).join("");
+  }
+
+  function openAiDraft(draftId) {
+    var draft = getAiDraftById(draftId);
+    if (!draft) {
+      showToast("AI-черновик не найден.", true);
+      return;
+    }
+    state.aiDraftOpenedId = draftId;
+    renderAiDrafts();
+    renderAiDraftInsights();
+  }
+
+  function startEditAiDraft(draftId) {
+    var draft = getAiDraftById(draftId);
+    if (!draft) {
+      showToast("AI-черновик не найден.", true);
+      return;
+    }
+    fillAiDraftForm(draft);
+  }
+
+  async function deleteAiDraft(draftId) {
+    var draft = getAiDraftById(draftId);
+    if (!draft) {
+      return;
+    }
+
+    if (!window.confirm("Удалить AI-черновик \"" + (draft.name || "Без названия") + "\"?")) {
+      return;
+    }
+
+    try {
+      await store.deleteAdminAiDraft(draftId);
+      if (state.aiDraftEditingId === draftId) {
+        resetAiDraftEditor();
+      }
+      await loadAiDrafts(false);
+      showToast("AI-черновик удалён");
+    } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      showToast("Не удалось удалить AI-черновик.", true);
+    }
+  }
+
+  async function publishAiDraft(draftId) {
+    var draft = getAiDraftById(draftId);
+    if (!draft) {
+      return;
+    }
+
+    if (!window.confirm("Опубликовать AI-черновик как новый товар?")) {
+      return;
+    }
+
+    try {
+      await store.publishAdminAiDraft(draftId);
+      await loadAiDrafts(false);
+      await loadCatalogPage({ reset: true, showErrorToast: false });
+      renderProducts();
+      showToast("AI-черновик опубликован как товар");
+    } catch (error) {
+      var message = String(error && error.message || "");
+      if (message.indexOf("401") >= 0 || message.indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_NOT_READY_TO_PUBLISH") >= 0) {
+        showToast("Для публикации переведите черновик в статус ready_to_publish.", true);
+        await loadAiDrafts(false);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_CANNOT_BE_PUBLISHED") >= 0) {
+        showToast("Черновик нельзя опубликовать: заполните бренд, название, фото и хотя бы один объём.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_ALREADY_PUBLISHED") >= 0) {
+        showToast("Этот черновик уже опубликован.", true);
+        await loadAiDrafts(false);
+        return;
+      }
+      showToast("Не удалось опубликовать AI-черновик.", true);
+    }
+  }
+
+  function onAiDraftListClick(event) {
+    var actionButton = event.target.closest("[data-ai-draft-action]");
+    if (!actionButton) {
+      return;
+    }
+
+    var action = String(actionButton.dataset.aiDraftAction || "");
+    var draftId = String(actionButton.dataset.aiDraftId || "");
+    if (!draftId) {
+      return;
+    }
+
+    if (action === "open") {
+      openAiDraft(draftId);
+      return;
+    }
+
+    if (action === "edit") {
+      startEditAiDraft(draftId);
+      return;
+    }
+
+    if (action === "delete") {
+      deleteAiDraft(draftId);
+      return;
+    }
+
+    if (action === "publish") {
+      publishAiDraft(draftId);
     }
   }
 
@@ -1356,6 +2247,12 @@
     }
     if (message.indexOf("CATALOG_DELETE_INTENT_MISMATCH") >= 0) {
       return "Сервер заблокировал сохранение: набор удаляемых товаров не совпал. Обновите админку и повторите.";
+    }
+    if (message.indexOf("CATALOG_IMAGE_INTEGRITY_BLOCKED") >= 0) {
+      return "Сервер заблокировал сохранение: слишком много фото товаров стали недоступны. Обновите админку и повторите.";
+    }
+    if (message.indexOf("PRODUCT_IMAGE_UNRECOVERABLE") >= 0) {
+      return "Фото товара недоступно. Обновите карточку товара или загрузите фото заново.";
     }
     if (message.indexOf("NETWORK_TIMEOUT") >= 0) {
       return "Таймаут сети. Проверьте интернет и повторите.";
@@ -1987,7 +2884,7 @@
 
     return ""
       + "<article class=\"admin-product-card\" data-product-id=\"" + escapeHtml(productId) + "\">"
-      + "  <img loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(product.image) + "\" alt=\"" + escapeHtml(product.name) + "\">"
+      + "  <img loading=\"lazy\" decoding=\"async\" data-fallback-image=\"" + escapeHtml(PRODUCT_PLACEHOLDER_IMAGE) + "\" src=\"" + escapeHtml(product.image) + "\" alt=\"" + escapeHtml(product.name) + "\">"
       + "  <div class=\"admin-product-body\">"
       + "    <div class=\"admin-product-head\">"
       + "      <div class=\"admin-product-title\">"
@@ -2483,6 +3380,230 @@
       elements.capacityRefreshBtn.addEventListener("click", function () {
         runCapacityCheck(true);
       });
+    }
+  }
+
+  function ensureImageIntegrityMonitorElements() {
+    if (elements.imageIntegrityMonitor) {
+      return;
+    }
+    if (!elements.panelView) {
+      return;
+    }
+
+    var anchor = elements.capacityMonitor;
+    if (!anchor) {
+      var topbar = elements.panelView.querySelector(".admin-topbar");
+      if (!topbar) {
+        return;
+      }
+      anchor = topbar;
+    }
+
+    var monitor = document.createElement("section");
+    monitor.className = "admin-image-monitor admin-image-monitor-ok";
+    monitor.innerHTML = ""
+      + "<div class=\"admin-image-main\">"
+      + "  <span class=\"admin-image-dot\" aria-hidden=\"true\"></span>"
+      + "  <strong class=\"admin-image-status\" data-image-status>Фото: проверяем целостность</strong>"
+      + "  <span class=\"admin-image-meta\" data-image-meta>Первичная проверка еще не завершена.</span>"
+      + "</div>"
+      + "<div class=\"admin-image-actions\">"
+      + "  <button class=\"btn btn-ghost admin-image-refresh\" type=\"button\" data-image-refresh>Проверить фото</button>"
+      + "  <button class=\"btn btn-ghost admin-image-repair\" type=\"button\" data-image-repair>Авто-восстановить</button>"
+      + "</div>";
+
+    anchor.insertAdjacentElement("afterend", monitor);
+
+    elements.imageIntegrityMonitor = monitor;
+    elements.imageIntegrityStatus = monitor.querySelector("[data-image-status]");
+    elements.imageIntegrityMeta = monitor.querySelector("[data-image-meta]");
+    elements.imageIntegrityRefreshBtn = monitor.querySelector("[data-image-refresh]");
+    elements.imageIntegrityRepairBtn = monitor.querySelector("[data-image-repair]");
+
+    if (elements.imageIntegrityRefreshBtn) {
+      elements.imageIntegrityRefreshBtn.addEventListener("click", function () {
+        runImageIntegrityCheck(true);
+      });
+    }
+
+    if (elements.imageIntegrityRepairBtn) {
+      elements.imageIntegrityRepairBtn.addEventListener("click", function () {
+        repairBrokenProductImages();
+      });
+    }
+  }
+
+  function getImageIntegrityLevelPriority(level) {
+    if (level === "critical") {
+      return 2;
+    }
+    if (level === "warning") {
+      return 1;
+    }
+    return 0;
+  }
+
+  function getImageIntegrityUiData(level) {
+    if (level === "critical") {
+      return {
+        className: "admin-image-monitor-critical",
+        status: "Фото: есть невосстановимые проблемы",
+        toast: "Найдены битые фото товаров, которые пока не удалось восстановить.",
+        isError: true
+      };
+    }
+    if (level === "warning") {
+      return {
+        className: "admin-image-monitor-warning",
+        status: "Фото: найдены проблемы, но есть история для восстановления",
+        toast: "Найдены битые фото. Их можно восстановить одной кнопкой из истории.",
+        isError: false
+      };
+    }
+    return {
+      className: "admin-image-monitor-ok",
+      status: "Фото: целостность в порядке",
+      toast: "Все фото товаров в порядке.",
+      isError: false
+    };
+  }
+
+  function setImageIntegrityButtonsBusy(isBusy) {
+    if (elements.imageIntegrityRefreshBtn) {
+      elements.imageIntegrityRefreshBtn.disabled = Boolean(isBusy);
+      elements.imageIntegrityRefreshBtn.textContent = isBusy ? "Проверяем..." : "Проверить фото";
+    }
+    if (elements.imageIntegrityRepairBtn) {
+      elements.imageIntegrityRepairBtn.disabled = Boolean(isBusy);
+      elements.imageIntegrityRepairBtn.textContent = isBusy ? "Восстанавливаем..." : "Авто-восстановить";
+    }
+  }
+
+  function applyImageIntegrityUi(level, payloadText) {
+    if (!elements.imageIntegrityMonitor || !elements.imageIntegrityStatus || !elements.imageIntegrityMeta) {
+      return;
+    }
+
+    var uiData = getImageIntegrityUiData(level);
+    elements.imageIntegrityMonitor.classList.remove("admin-image-monitor-ok", "admin-image-monitor-warning", "admin-image-monitor-critical");
+    elements.imageIntegrityMonitor.classList.add(uiData.className);
+    elements.imageIntegrityStatus.textContent = uiData.status;
+    elements.imageIntegrityMeta.textContent = payloadText;
+  }
+
+  async function runImageIntegrityCheck(isManual) {
+    if (!elements.panelView || elements.panelView.classList.contains("hidden")) {
+      return;
+    }
+    if (!isAuthenticated()) {
+      return;
+    }
+    if (state.imageIntegrityMonitor.inFlight) {
+      return;
+    }
+    if (typeof store.fetchAdminImageIntegrityReport !== "function") {
+      return;
+    }
+
+    ensureImageIntegrityMonitorElements();
+    state.imageIntegrityMonitor.inFlight = true;
+    setImageIntegrityButtonsBusy(true);
+
+    try {
+      var report = await store.fetchAdminImageIntegrityReport();
+      var broken = Math.max(0, Math.round(Number(report && report.broken) || 0));
+      var recoverable = Math.max(0, Math.round(Number(report && report.recoverable) || 0));
+      var total = Math.max(0, Math.round(Number(report && report.total) || 0));
+      var checkedAt = new Date(report && report.checkedAt || Date.now());
+      var checkedLabel = checkedAt.toLocaleTimeString("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+      var payloadText = "битых: " + broken + " из " + total + " · восстановимых: " + recoverable + " · " + checkedLabel;
+      var level = "ok";
+      if (broken > 0 && recoverable > 0) {
+        level = "warning";
+      } else if (broken > 0) {
+        level = "critical";
+      }
+
+      applyImageIntegrityUi(level, payloadText);
+
+      var uiData = getImageIntegrityUiData(level);
+      var previousLevel = state.imageIntegrityMonitor.lastLevel;
+      var now = Date.now();
+      if (isManual) {
+        showToast(uiData.status + ". " + payloadText, uiData.isError);
+      } else if (
+        level !== previousLevel
+        && (
+          getImageIntegrityLevelPriority(level) > getImageIntegrityLevelPriority(previousLevel)
+          || (level === "ok" && previousLevel !== "ok")
+        )
+      ) {
+        if (now - state.imageIntegrityMonitor.lastToastAt >= CAPACITY_TOAST_COOLDOWN_MS) {
+          showToast(uiData.toast, uiData.isError);
+          state.imageIntegrityMonitor.lastToastAt = now;
+        }
+      }
+      state.imageIntegrityMonitor.lastLevel = level;
+    } catch (error) {
+      var message = String(error && error.message || "");
+      if (message.indexOf("401") >= 0 || message.indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      applyImageIntegrityUi("warning", "Не удалось проверить целостность фото. Проверьте соединение и повторите.");
+      if (isManual) {
+        showToast("Не удалось проверить фото товаров.", true);
+      }
+    } finally {
+      state.imageIntegrityMonitor.inFlight = false;
+      setImageIntegrityButtonsBusy(false);
+    }
+  }
+
+  async function repairBrokenProductImages() {
+    if (!isAuthenticated()) {
+      return;
+    }
+    if (state.imageIntegrityMonitor.inFlight) {
+      return;
+    }
+    if (typeof store.repairAdminProductImages !== "function") {
+      showToast("Обновите scripts/common.js, чтобы восстанавливать фото.", true);
+      return;
+    }
+
+    state.imageIntegrityMonitor.inFlight = true;
+    setImageIntegrityButtonsBusy(true);
+
+    try {
+      var result = await store.repairAdminProductImages();
+      state.imageIntegrityMonitor.inFlight = false;
+      setImageIntegrityButtonsBusy(false);
+      await refreshPanelFromServer(false);
+      await runImageIntegrityCheck(false);
+      var repaired = Math.max(0, Math.round(Number(result && result.repaired) || 0));
+      if (repaired > 0) {
+        showToast("Фото восстановлены: " + repaired + ".");
+      } else {
+        showToast("Битых фото для восстановления не найдено.");
+      }
+    } catch (error) {
+      var message = String(error && error.message || "");
+      if (message.indexOf("401") >= 0 || message.indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      showToast("Не удалось выполнить автовосстановление фото.", true);
+    } finally {
+      state.imageIntegrityMonitor.inFlight = false;
+      setImageIntegrityButtonsBusy(false);
     }
   }
 

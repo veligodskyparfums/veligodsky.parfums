@@ -1558,6 +1558,77 @@ body.menu-open .nav {
   box-shadow: 0 0 0 6px rgba(255, 120, 120, 0.2);
 }
 
+.admin-image-monitor {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(139, 216, 139, 0.28);
+  background: linear-gradient(170deg, rgba(28, 60, 34, 0.18), rgba(8, 14, 9, 0.6));
+}
+
+.admin-image-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.admin-image-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #65d26e;
+  box-shadow: 0 0 0 6px rgba(101, 210, 110, 0.16);
+}
+
+.admin-image-status {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.admin-image-meta {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.admin-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.admin-image-refresh,
+.admin-image-repair {
+  padding: 7px 12px;
+  font-size: 0.92rem;
+}
+
+.admin-image-monitor.admin-image-monitor-warning {
+  border-color: rgba(250, 202, 87, 0.45);
+  background: linear-gradient(170deg, rgba(120, 92, 26, 0.28), rgba(22, 14, 5, 0.68));
+}
+
+.admin-image-monitor.admin-image-monitor-warning .admin-image-dot {
+  background: #f4cc58;
+  box-shadow: 0 0 0 6px rgba(244, 204, 88, 0.16);
+}
+
+.admin-image-monitor.admin-image-monitor-critical {
+  border-color: rgba(255, 114, 114, 0.5);
+  background: linear-gradient(170deg, rgba(118, 25, 25, 0.3), rgba(26, 5, 5, 0.7));
+}
+
+.admin-image-monitor.admin-image-monitor-critical .admin-image-dot {
+  background: #ff7878;
+  box-shadow: 0 0 0 6px rgba(255, 120, 120, 0.2);
+}
+
 .admin-section {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-md);
@@ -1713,6 +1784,14 @@ body.menu-open .nav {
   font-size: 1.1rem;
 }
 
+.admin-subsection--panel {
+  align-content: start;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.025);
+}
+
 .admin-review-card {
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: var(--radius-sm);
@@ -1796,6 +1875,57 @@ body.menu-open .nav {
   border-radius: 8px;
 }
 
+.admin-draft-thumb {
+  width: 88px;
+  height: 112px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.admin-draft-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.82rem;
+  text-transform: lowercase;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-draft-status--pending {
+  border-color: rgba(255, 194, 92, 0.28);
+  color: #ffd580;
+}
+
+.admin-draft-status--needs_review {
+  border-color: rgba(255, 214, 122, 0.28);
+  color: #ffd98d;
+}
+
+.admin-draft-status--ready_to_publish {
+  border-color: rgba(122, 204, 255, 0.28);
+  color: #a9dfff;
+}
+
+.admin-draft-status--published {
+  border-color: rgba(95, 215, 120, 0.28);
+  color: #93e39f;
+}
+
+.admin-draft-status--rejected {
+  border-color: rgba(255, 125, 125, 0.28);
+  color: #ff9f9f;
+}
+
 .admin-product-body {
   display: grid;
   gap: 7px;
@@ -1827,6 +1957,79 @@ body.menu-open .nav {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+.admin-grid--draft-insights {
+  margin-top: 14px;
+  align-items: start;
+}
+
+.admin-draft-card.is-selected {
+  border-color: rgba(255, 255, 255, 0.34);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 18px 34px rgba(0, 0, 0, 0.24);
+}
+
+.admin-draft-card .btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.admin-draft-card .btn[disabled]:hover {
+  transform: none;
+}
+
+.ai-draft-live-preview {
+  min-height: 220px;
+}
+
+.ai-draft-preview-shell {
+  width: min(100%, 430px);
+}
+
+.ai-draft-preview-card {
+  transform: none !important;
+}
+
+.ai-draft-preview-card .btn[disabled] {
+  opacity: 1;
+  cursor: default;
+}
+
+.ai-draft-preview-image-empty {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.92rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.08), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+}
+
+.ai-draft-analysis-json {
+  margin: 0;
+  min-height: 220px;
+  max-height: 520px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(7, 7, 7, 0.95);
+  color: #d9d9d9;
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ai-draft-analysis-json--error {
+  border-color: rgba(255, 122, 122, 0.4);
+  color: #ffc7c7;
 }
 
 .admin-product-reviews {
@@ -1910,6 +2113,10 @@ body.menu-open .nav {
 
   .admin-catalog-tools {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .admin-grid--draft-insights {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   }
 }
 
@@ -2184,6 +2391,20 @@ body.menu-open .nav {
     align-self: flex-start;
   }
 
+  .admin-image-monitor {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-image-actions {
+    width: 100%;
+  }
+
+  .admin-image-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
   .reviews-carousel {
     grid-template-columns: 1fr;
   }
@@ -2242,6 +2463,11 @@ body.menu-open .nav {
     height: 210px;
   }
 
+  .admin-draft-thumb {
+    width: 100%;
+    height: 210px;
+  }
+
   .admin-catalog-tools {
     grid-template-columns: 1fr;
   }
@@ -2252,5 +2478,9 @@ body.menu-open .nav {
 
   .admin-top-actions {
     grid-template-columns: 1fr;
+  }
+
+  .ai-draft-preview-shell {
+    width: 100%;
   }
 }

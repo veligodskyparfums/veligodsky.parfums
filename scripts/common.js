@@ -8,9 +8,11 @@
   var API_PUBLIC_CATALOG_URL = "/api/catalog";
   var API_ADMIN_CATALOG_URL = "/api/admin/catalog";
   var API_ADMIN_PRODUCTS_URL = "/api/admin/products";
+  var API_ADMIN_AI_DRAFTS_URL = "/api/admin/ai-drafts";
   var API_ADMIN_AUTH_URL = "/api/admin/auth";
   var API_ADMIN_PASSWORD_URL = "/api/admin/password";
   var API_ADMIN_SNAPSHOT_URL = "/api/admin/snapshot";
+  var API_ADMIN_IMAGE_INTEGRITY_URL = "/api/admin/image-integrity";
   var API_REVIEW_CAPTCHA_URL = "/api/review-captcha";
   var API_HOMEPAGE_REVIEWS_URL = "/api/homepage-reviews";
   var API_PRODUCT_REVIEWS_URL = "/api/product-reviews";
@@ -614,6 +616,64 @@
       detailsLoaded: product.detailsLoaded === false ? false : true,
       topWeek: Boolean(product.topWeek),
       topMonth: Boolean(product.topMonth)
+    };
+  }
+
+  function normalizeAiDraft(draft) {
+    if (!draft || typeof draft !== "object") {
+      return null;
+    }
+
+    var source = String(draft.source || "manual-test").toLowerCase().trim();
+    if (["manual-test", "telegram"].indexOf(source) === -1) {
+      source = "manual-test";
+    }
+
+    var status = String(draft.status || "pending").toLowerCase().trim();
+    if (["pending", "needs_review", "ready_to_publish", "published", "rejected"].indexOf(status) === -1) {
+      status = "pending";
+    }
+
+    var volumes = Array.isArray(draft.volumes)
+      ? draft.volumes.map(normalizeVolume).filter(Boolean)
+      : [];
+
+    var notes = Array.isArray(draft.notes)
+      ? draft.notes.map(function (note) {
+          return repairMojibake(String(note || "").trim());
+        }).filter(Boolean)
+      : [];
+
+    var confidenceScore = toNumber(draft.confidenceScore, 0);
+    if (!Number.isFinite(confidenceScore)) {
+      confidenceScore = 0;
+    }
+
+    var analysis = null;
+    if (draft.analysis && typeof draft.analysis === "object") {
+      try {
+        analysis = JSON.parse(JSON.stringify(draft.analysis));
+      } catch (error) {
+        analysis = null;
+      }
+    }
+
+    return {
+      id: String(draft.id || uid("aid")),
+      source: source,
+      sourceUrl: String(draft.sourceUrl || "").trim(),
+      rawText: repairMojibake(String(draft.rawText || "").trim()),
+      brand: repairMojibake(String(draft.brand || "").trim()),
+      name: repairMojibake(String(draft.name || "").trim()),
+      description: repairMojibake(String(draft.description || "").trim()),
+      image: String(draft.image || "").trim(),
+      volumes: volumes,
+      notes: notes,
+      analysis: analysis,
+      confidenceScore: Math.max(0, Math.min(100, Math.round(confidenceScore * 100) / 100)),
+      status: status,
+      createdAt: String(draft.createdAt || new Date().toISOString()),
+      updatedAt: String(draft.updatedAt || draft.createdAt || new Date().toISOString())
     };
   }
 
@@ -1533,6 +1593,161 @@
     };
   }
 
+  async function fetchAdminAiDrafts() {
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_AI_DRAFTS_URL, {
+      method: "GET",
+      cache: "no-cache",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_READ_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var payload = await response.json();
+    return Array.isArray(payload && payload.items)
+      ? payload.items.map(normalizeAiDraft).filter(Boolean)
+      : [];
+  }
+
+  async function upsertAdminAiDraft(draft) {
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var normalizedDraft = normalizeAiDraft(draft);
+    if (!normalizedDraft) {
+      throw new Error("INVALID_AI_DRAFT_PAYLOAD");
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_AI_DRAFTS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      },
+      body: JSON.stringify({ draft: normalizedDraft })
+    }, REMOTE_WRITE_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (!response.ok) {
+      var upsertCode = "";
+      try {
+        var upsertPayload = await response.json();
+        upsertCode = String(upsertPayload && upsertPayload.error || "").trim();
+      } catch (error) {
+        upsertCode = "";
+      }
+      throw new Error(upsertCode || ("HTTP " + response.status));
+    }
+
+    var result = await response.json();
+    return {
+      created: Boolean(result && result.created),
+      draft: normalizeAiDraft(result && result.draft)
+    };
+  }
+
+  async function deleteAdminAiDraft(draftId) {
+    var safeDraftId = String(draftId || "").trim();
+    if (!safeDraftId) {
+      throw new Error("INVALID_AI_DRAFT_ID");
+    }
+
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_AI_DRAFTS_URL + "/" + encodeURIComponent(safeDraftId), {
+      method: "DELETE",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_WRITE_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (response.status === 404) {
+      throw new Error("AI_DRAFT_NOT_FOUND");
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    return { id: safeDraftId };
+  }
+
+  async function publishAdminAiDraft(draftId) {
+    var safeDraftId = String(draftId || "").trim();
+    if (!safeDraftId) {
+      throw new Error("INVALID_AI_DRAFT_ID");
+    }
+
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_AI_DRAFTS_URL + "/" + encodeURIComponent(safeDraftId) + "/publish", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_WRITE_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (response.status === 404) {
+      throw new Error("AI_DRAFT_NOT_FOUND");
+    }
+    if (response.status === 409) {
+      var conflictPayload = {};
+      try {
+        conflictPayload = await response.json();
+      } catch (error) {
+        conflictPayload = {};
+      }
+      throw new Error(String(conflictPayload && conflictPayload.error || "AI_DRAFT_CONFLICT"));
+    }
+    if (response.status === 400) {
+      throw new Error("AI_DRAFT_CANNOT_BE_PUBLISHED");
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var result = await response.json();
+    return {
+      total: Math.max(0, Math.round(Number(result && result.total) || 0)),
+      draft: normalizeAiDraft(result && result.draft),
+      product: normalizeProduct(result && result.product, 0)
+    };
+  }
+
   async function createAdminSnapshot(reason) {
     var adminToken = getStoredAdminToken();
     if (!adminToken) {
@@ -1560,6 +1775,64 @@
       throw new Error("UNAUTHORIZED");
     }
 
+    if (!response.ok) {
+      var errorCode = "";
+      try {
+        var errorPayload = await response.json();
+        errorCode = String(errorPayload && errorPayload.error || "").trim();
+      } catch (error) {
+        errorCode = "";
+      }
+      throw new Error(errorCode || ("HTTP " + response.status));
+    }
+
+    return response.json();
+  }
+
+  async function fetchAdminImageIntegrityReport() {
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_IMAGE_INTEGRITY_URL, {
+      method: "GET",
+      cache: "no-cache",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_READ_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    return response.json();
+  }
+
+  async function repairAdminProductImages() {
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_IMAGE_INTEGRITY_URL + "/repair", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_WRITE_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
     if (!response.ok) {
       var errorCode = "";
       try {
@@ -2056,9 +2329,11 @@
     API_PUBLIC_CATALOG_URL: API_PUBLIC_CATALOG_URL,
     API_ADMIN_CATALOG_URL: API_ADMIN_CATALOG_URL,
     API_ADMIN_PRODUCTS_URL: API_ADMIN_PRODUCTS_URL,
+    API_ADMIN_AI_DRAFTS_URL: API_ADMIN_AI_DRAFTS_URL,
     API_ADMIN_AUTH_URL: API_ADMIN_AUTH_URL,
     API_ADMIN_PASSWORD_URL: API_ADMIN_PASSWORD_URL,
     API_ADMIN_SNAPSHOT_URL: API_ADMIN_SNAPSHOT_URL,
+    API_ADMIN_IMAGE_INTEGRITY_URL: API_ADMIN_IMAGE_INTEGRITY_URL,
     API_REVIEW_CAPTCHA_URL: API_REVIEW_CAPTCHA_URL,
     API_HOMEPAGE_REVIEWS_URL: API_HOMEPAGE_REVIEWS_URL,
     API_PRODUCT_REVIEWS_URL: API_PRODUCT_REVIEWS_URL,
@@ -2069,6 +2344,8 @@
     hasAdminSession: hasAdminSession,
     changeAdminPassword: changeAdminPassword,
     createAdminSnapshot: createAdminSnapshot,
+    fetchAdminImageIntegrityReport: fetchAdminImageIntegrityReport,
+    repairAdminProductImages: repairAdminProductImages,
     uid: uid,
     getDefaultData: getDefaultData,
     loadData: loadData,
@@ -2080,6 +2357,10 @@
     fetchAdminProductById: fetchAdminProductById,
     upsertAdminProduct: upsertAdminProduct,
     deleteAdminProduct: deleteAdminProduct,
+    fetchAdminAiDrafts: fetchAdminAiDrafts,
+    upsertAdminAiDraft: upsertAdminAiDraft,
+    deleteAdminAiDraft: deleteAdminAiDraft,
+    publishAdminAiDraft: publishAdminAiDraft,
     getHomepageReviews: getHomepageReviews,
     getPendingHomepageReviews: getPendingHomepageReviews,
     saveHomepageReviews: saveHomepageReviews,

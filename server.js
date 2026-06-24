@@ -14,8 +14,10 @@ const PORT = Number(process.env.PORT) || 3000;
 const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const DATA_FILE = path.join(DATA_DIR, "store-data.json");
+const AI_DRAFTS_FILE = path.join(DATA_DIR, "product-import-drafts.json");
 const DB_TABLE = "store_state";
 const DB_HISTORY_TABLE = "store_state_history";
+const AI_DRAFTS_DB_TABLE = "product_import_drafts";
 const MAX_BODY_SIZE = 30 * 1024 * 1024;
 const REQUEST_BODY_TIMEOUT_MS = Math.max(5000, Number(process.env.REQUEST_BODY_TIMEOUT_MS || 20 * 1000));
 const SERVER_REQUEST_TIMEOUT_MS = Math.max(10 * 1000, Number(process.env.SERVER_REQUEST_TIMEOUT_MS || 30 * 1000));
@@ -52,12 +54,26 @@ const STORE_SHRINK_GUARD_MIN_DROP_COUNT = Math.max(1, Number(process.env.STORE_S
 const STORE_SHRINK_GUARD_MIN_DROP_RATIO = Math.min(0.95, Math.max(0.05, Number(process.env.STORE_SHRINK_GUARD_MIN_DROP_RATIO || 0.15)));
 const STORE_HISTORY_MAX_ROWS = Math.max(20, Number(process.env.STORE_HISTORY_MAX_ROWS || 300));
 const STORE_DELETE_INTENT_SAMPLE_LIMIT = Math.max(1, Number(process.env.STORE_DELETE_INTENT_SAMPLE_LIMIT || 8));
+const STORE_IMAGE_GUARD_MIN_BREAK_COUNT = Math.max(1, Number(process.env.STORE_IMAGE_GUARD_MIN_BREAK_COUNT || 5));
+const STORE_IMAGE_GUARD_MIN_BREAK_RATIO = Math.min(0.95, Math.max(0.02, Number(process.env.STORE_IMAGE_GUARD_MIN_BREAK_RATIO || 0.08)));
+const STORE_IMAGE_GUARD_SAMPLE_LIMIT = Math.max(1, Number(process.env.STORE_IMAGE_GUARD_SAMPLE_LIMIT || 8));
 const RESPONSE_COMPRESSION_MIN_BYTES = Math.max(512, Number(process.env.RESPONSE_COMPRESSION_MIN_BYTES || 1400));
 const RESPONSE_COMPRESSION_MAX_BYTES = Math.max(64 * 1024, Number(process.env.RESPONSE_COMPRESSION_MAX_BYTES || 4 * 1024 * 1024));
 const ADMIN_CATALOG_DEFAULT_LIMIT = Math.max(1, Number(process.env.ADMIN_CATALOG_DEFAULT_LIMIT || 10));
 const ADMIN_CATALOG_MAX_LIMIT = Math.max(ADMIN_CATALOG_DEFAULT_LIMIT, Number(process.env.ADMIN_CATALOG_MAX_LIMIT || 80));
 const ADMIN_CATALOG_CACHE_MAX_ENTRIES = Math.max(10, Number(process.env.ADMIN_CATALOG_CACHE_MAX_ENTRIES || 40));
 const PRODUCT_IMAGE_CACHE_MAX_ENTRIES = Math.max(20, Number(process.env.PRODUCT_IMAGE_CACHE_MAX_ENTRIES || 180));
+const MAX_AI_DRAFT_SOURCE_LENGTH = 32;
+const MAX_AI_DRAFT_SOURCE_URL_LENGTH = 1500;
+const MAX_AI_DRAFT_RAW_TEXT_LENGTH = 20000;
+const MAX_AI_DRAFT_TEXT_LENGTH = 6000;
+const MAX_AI_DRAFT_IMAGE_LENGTH = 2 * 1024 * 1024;
+const MAX_AI_DRAFT_NOTES = 40;
+const MAX_AI_DRAFT_NOTE_LENGTH = 400;
+const MAX_AI_DRAFT_ANALYSIS_DEPTH = 5;
+const MAX_AI_DRAFT_ANALYSIS_KEYS = 80;
+const MAX_AI_DRAFT_ANALYSIS_STRING_LENGTH = 800;
+const MAX_AI_DRAFT_ANALYSIS_JSON_LENGTH = 20000;
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -186,6 +202,7 @@ const FALLBACK_DATA = {
 };
 
 let storeRepository = null;
+let aiDraftRepository = null;
 let httpServer = null;
 let shuttingDown = false;
 let storeMutationQueue = Promise.resolve();
@@ -599,6 +616,10 @@ function getRateLimitRule(pathname, method) {
     return RATE_LIMIT_RULES.adminSnapshot;
   }
 
+  if (safePath.startsWith("/api/admin/image-integrity") && safeMethod === "POST") {
+    return RATE_LIMIT_RULES.apiWrite;
+  }
+
   if (safePath === "/api/client-errors" && safeMethod === "POST") {
     return RATE_LIMIT_RULES.clientErrors;
   }
@@ -616,6 +637,10 @@ function getRateLimitRule(pathname, method) {
   }
 
   if (safePath === "/api/store-data" && safeMethod === "PUT") {
+    return RATE_LIMIT_RULES.apiWrite;
+  }
+
+  if (safePath.startsWith("/api/admin/ai-drafts") && (safeMethod === "POST" || safeMethod === "DELETE")) {
     return RATE_LIMIT_RULES.apiWrite;
   }
 
@@ -1347,9 +1372,14 @@ function getProductPendingReviewsCount(product) {
 
 function getProductPreviewImageUrl(product) {
   const safeProduct = product && typeof product === "object" ? product : {};
-  const image = safeString(safeProduct.image);
-  if (/^https?:\/\//i.test(image)) {
+  const image = normalizePersistedProductImage(safeProduct.image, "", safeProduct.id, true);
+  if (isHttpImageUrl(image)) {
     return image;
+  }
+
+  const staticPath = parseStaticProductImagePath(image);
+  if (staticPath) {
+    return staticPath;
   }
   return buildProductImageApiPath(safeProduct.id);
 }
@@ -1541,6 +1571,24 @@ async function getHistoricalProductImageResponse(productId) {
   return setLruCacheEntry(derivedResponseCache.productImages, safeProductId, value, PRODUCT_IMAGE_CACHE_MAX_ENTRIES);
 }
 
+async function getHistoricalProductImageResponse(productId) {
+  const safeProductId = safeString(productId).slice(0, 120);
+  if (!safeProductId || !storeRepository || typeof storeRepository.findHistoricalProductImage !== "function") {
+    return null;
+  }
+
+  const historicalImage = await storeRepository.findHistoricalProductImage(safeProductId);
+  if (!historicalImage) {
+    return null;
+  }
+
+  const value = buildProductImageResponseFromValue(safeProductId, historicalImage);
+  if (!value) {
+    return null;
+  }
+
+  return setLruCacheEntry(derivedResponseCache.productImages, safeProductId, value, PRODUCT_IMAGE_CACHE_MAX_ENTRIES);
+}
 async function repairSingleProductImageFromHistory(productId) {
   const safeProductId = safeString(productId).slice(0, 120);
   if (!safeProductId || !storeRepository || typeof storeRepository.findHistoricalProductImage !== "function") {
@@ -1628,7 +1676,6 @@ async function repairBrokenProductImagesFromHistory(repository) {
 
   return { repaired, skipped };
 }
-
 function getStoreDataForRequest(req, data) {
   const token = getBearerToken(req);
   if (isAdminSessionValid(token)) {
@@ -1696,6 +1743,62 @@ async function resolveRecoverableProductImage(productId, candidateImage, current
   return "";
 }
 
+async function collectProductImageIntegrityReport(repository) {
+  if (!repository || typeof repository.read !== "function") {
+    return {
+      ok: false,
+      total: 0,
+      broken: 0,
+      recoverable: 0,
+      checkedAt: new Date().toISOString(),
+      brokenSample: []
+    };
+  }
+
+  const currentData = await repository.read();
+  const safeData = validateStoreData(currentData);
+  const safeProducts = Array.isArray(safeData.products) ? safeData.products : [];
+  let broken = 0;
+  let recoverable = 0;
+  const brokenSample = [];
+
+  for (const product of safeProducts) {
+    const productId = safeString(product && product.id).slice(0, 120);
+    if (!productId) {
+      continue;
+    }
+
+    const currentImage = normalizePersistedProductImage(product.image, "", productId, false);
+    if (currentImage && !isProductImageApiPath(currentImage, productId) && isRenderableProductImageValue(currentImage, productId)) {
+      continue;
+    }
+
+    broken += 1;
+    if (brokenSample.length < STORE_IMAGE_GUARD_SAMPLE_LIMIT) {
+      brokenSample.push({
+        id: productId,
+        name: safeString(product && product.name).slice(0, 160),
+        brand: safeString(product && product.brand).slice(0, 160)
+      });
+    }
+
+    if (typeof repository.findHistoricalProductImage === "function") {
+      const historicalImage = await repository.findHistoricalProductImage(productId);
+      if (historicalImage) {
+        recoverable += 1;
+      }
+    }
+  }
+
+  return {
+    ok: broken <= 0,
+    total: safeProducts.length,
+    broken,
+    recoverable,
+    checkedAt: new Date().toISOString(),
+    brokenSample
+  };
+}
 async function mergeIncomingStorePayloadWithCurrentData(payload, currentData) {
   const next = ensureIncomingAdminPassword(payload, currentData);
   const currentProducts = Array.isArray(currentData && currentData.products) ? currentData.products : [];
@@ -1875,6 +1978,271 @@ function sanitizeIncomingAdminProduct(rawProduct, existingProduct) {
   };
 }
 
+function generateAiDraftId() {
+  return "aid_" + crypto.randomBytes(8).toString("hex");
+}
+
+function normalizeAiDraftSource(value) {
+  const safe = safeString(value).toLowerCase().slice(0, MAX_AI_DRAFT_SOURCE_LENGTH);
+  if (safe === "telegram") {
+    return "telegram";
+  }
+  return "manual-test";
+}
+
+function normalizeAiDraftStatus(value) {
+  const safe = safeString(value).toLowerCase();
+  if (safe === "needs_review") {
+    return "needs_review";
+  }
+  if (safe === "ready_to_publish") {
+    return "ready_to_publish";
+  }
+  if (safe === "published") {
+    return "published";
+  }
+  if (safe === "rejected") {
+    return "rejected";
+  }
+  return "pending";
+}
+
+function normalizeAiDraftConfidenceScore(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(parsed * 100) / 100));
+}
+
+function normalizeAiDraftNotes(value) {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/\r?\n+/)
+      : [];
+
+  return source
+    .map((note) => String(note || "").trim().slice(0, MAX_AI_DRAFT_NOTE_LENGTH))
+    .filter(Boolean)
+    .slice(0, MAX_AI_DRAFT_NOTES);
+}
+
+function sanitizeAiDraftAnalysisNode(value, depth) {
+  if (depth > MAX_AI_DRAFT_ANALYSIS_DEPTH) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.round(value * 10000) / 10000 : undefined;
+  }
+
+  if (typeof value === "string") {
+    return String(value).trim().slice(0, MAX_AI_DRAFT_ANALYSIS_STRING_LENGTH);
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeAiDraftAnalysisNode(item, depth + 1))
+      .filter((item) => item !== undefined)
+      .slice(0, MAX_AI_DRAFT_ANALYSIS_KEYS);
+  }
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const entries = Object.entries(value).slice(0, MAX_AI_DRAFT_ANALYSIS_KEYS);
+  const normalized = {};
+  for (const [rawKey, rawValue] of entries) {
+    const key = safeString(rawKey).trim().slice(0, 120);
+    if (!key) {
+      continue;
+    }
+    const safeValue = sanitizeAiDraftAnalysisNode(rawValue, depth + 1);
+    if (safeValue !== undefined) {
+      normalized[key] = safeValue;
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeAiDraftAnalysis(value, fallbackValue) {
+  const source = value === undefined ? fallbackValue : value;
+  if (source === undefined) {
+    return null;
+  }
+
+  const normalized = sanitizeAiDraftAnalysisNode(source, 0);
+  if (normalized === undefined) {
+    return null;
+  }
+
+  try {
+    const serialized = JSON.stringify(normalized);
+    if (!serialized || serialized.length > MAX_AI_DRAFT_ANALYSIS_JSON_LENGTH) {
+      return null;
+    }
+  } catch (error) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function getAiDraftSuggestedGender(draft) {
+  const analysis = draft && draft.analysis && typeof draft.analysis === "object" ? draft.analysis : null;
+  if (!analysis) {
+    return "unisex";
+  }
+
+  return normalizeProductGender(
+    analysis.gender !== undefined
+      ? analysis.gender
+      : analysis.genderLabel !== undefined
+        ? analysis.genderLabel
+        : "unisex"
+  );
+}
+
+function getAiDraftSuggestedBottleType(draft) {
+  const analysis = draft && draft.analysis && typeof draft.analysis === "object" ? draft.analysis : null;
+  if (!analysis) {
+    return "full";
+  }
+
+  return normalizeProductBottleType(
+    analysis.bottleType !== undefined
+      ? analysis.bottleType
+      : analysis.flaconType !== undefined
+        ? analysis.flaconType
+        : analysis.type
+  );
+}
+
+function sanitizeIncomingAiDraft(rawDraft, existingDraft) {
+  if (!rawDraft || typeof rawDraft !== "object") {
+    throw new Error("INVALID_AI_DRAFT_PAYLOAD");
+  }
+
+  const safeExisting = existingDraft && typeof existingDraft === "object" ? existingDraft : null;
+  const id = safeString(rawDraft.id || (safeExisting && safeExisting.id) || generateAiDraftId()).slice(0, 120);
+  if (!id) {
+    throw new Error("INVALID_AI_DRAFT_PAYLOAD");
+  }
+
+  const rawVolumes = Array.isArray(rawDraft.volumes)
+    ? rawDraft.volumes
+    : (safeExisting && Array.isArray(safeExisting.volumes) ? safeExisting.volumes : []);
+  const seenVolumes = new Set();
+  const volumes = rawVolumes
+    .map(sanitizeProductVolume)
+    .filter(Boolean)
+    .filter((volume) => {
+      const key = String(volume.ml);
+      if (seenVolumes.has(key)) {
+        return false;
+      }
+      seenVolumes.add(key);
+      return true;
+    })
+    .sort((left, right) => left.ml - right.ml);
+
+  return {
+    id,
+    source: normalizeAiDraftSource(rawDraft.source !== undefined ? rawDraft.source : (safeExisting && safeExisting.source)),
+    sourceUrl: String(rawDraft.sourceUrl !== undefined ? rawDraft.sourceUrl : (safeExisting && safeExisting.sourceUrl) || "")
+      .trim()
+      .slice(0, MAX_AI_DRAFT_SOURCE_URL_LENGTH),
+    rawText: String(rawDraft.rawText !== undefined ? rawDraft.rawText : (safeExisting && safeExisting.rawText) || "")
+      .trim()
+      .slice(0, MAX_AI_DRAFT_RAW_TEXT_LENGTH),
+    brand: String(rawDraft.brand !== undefined ? rawDraft.brand : (safeExisting && safeExisting.brand) || "")
+      .trim()
+      .slice(0, MAX_AI_DRAFT_TEXT_LENGTH),
+    name: String(rawDraft.name !== undefined ? rawDraft.name : (safeExisting && safeExisting.name) || "")
+      .trim()
+      .slice(0, MAX_AI_DRAFT_TEXT_LENGTH),
+    description: String(rawDraft.description !== undefined ? rawDraft.description : (safeExisting && safeExisting.description) || "")
+      .trim()
+      .slice(0, MAX_AI_DRAFT_TEXT_LENGTH),
+    image: safeString(rawDraft.image !== undefined ? rawDraft.image : (safeExisting && safeExisting.image)).slice(0, MAX_AI_DRAFT_IMAGE_LENGTH),
+    volumes,
+    notes: normalizeAiDraftNotes(rawDraft.notes !== undefined ? rawDraft.notes : (safeExisting && safeExisting.notes)),
+    analysis: normalizeAiDraftAnalysis(
+      rawDraft.analysis,
+      safeExisting && safeExisting.analysis
+    ),
+    confidenceScore: normalizeAiDraftConfidenceScore(
+      rawDraft.confidenceScore !== undefined ? rawDraft.confidenceScore : (safeExisting && safeExisting.confidenceScore)
+    ),
+    status: normalizeAiDraftStatus(rawDraft.status !== undefined ? rawDraft.status : (safeExisting && safeExisting.status)),
+    createdAt: normalizeIsoDate(rawDraft.createdAt || (safeExisting && safeExisting.createdAt) || new Date().toISOString()),
+    updatedAt: normalizeIsoDate(new Date().toISOString())
+  };
+}
+
+function normalizeStoredAiDraft(rawDraft) {
+  try {
+    return sanitizeIncomingAiDraft(rawDraft, rawDraft);
+  } catch (error) {
+    return null;
+  }
+}
+
+function normalizeStoredAiDraftList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map(normalizeStoredAiDraft)
+    .filter(Boolean)
+    .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+}
+
+function buildProductPayloadFromAiDraft(draft, products) {
+  const safeDraft = draft && typeof draft === "object" ? draft : null;
+  if (!safeDraft) {
+    throw new Error("INVALID_AI_DRAFT_PAYLOAD");
+  }
+
+  const usedIds = new Set(
+    Array.isArray(products)
+      ? products.map((item) => safeString(item && item.id)).filter(Boolean)
+      : []
+  );
+
+  let productId = "";
+  do {
+    productId = "p_" + crypto.randomBytes(8).toString("hex");
+  } while (usedIds.has(productId));
+
+  return {
+    id: productId,
+    name: safeDraft.name,
+    brand: safeDraft.brand,
+    gender: getAiDraftSuggestedGender(safeDraft),
+    bottleType: getAiDraftSuggestedBottleType(safeDraft),
+    description: safeDraft.description,
+    image: safeDraft.image,
+    volumes: Array.isArray(safeDraft.volumes) ? safeDraft.volumes : [],
+    reviews: [],
+    pendingReviews: [],
+    topWeek: false,
+    topMonth: false
+  };
+}
+
 function buildAdminProductSearchIndex(product) {
   const safeProduct = product && typeof product === "object" ? product : {};
   const volumeIndex = (Array.isArray(safeProduct.volumes) ? safeProduct.volumes : [])
@@ -1937,6 +2305,39 @@ function parseAdminProductIdFromPath(pathname) {
     return "";
   }
   const rawPart = String(pathname || "").slice(prefix.length);
+  if (!rawPart || rawPart.includes("/")) {
+    return "";
+  }
+  try {
+    return safeString(decodeURIComponent(rawPart)).slice(0, 120);
+  } catch (error) {
+    return "";
+  }
+}
+
+function parseAdminAiDraftIdFromPath(pathname) {
+  const prefix = "/api/admin/ai-drafts/";
+  if (!safeString(pathname).startsWith(prefix)) {
+    return "";
+  }
+  const rawPart = String(pathname || "").slice(prefix.length);
+  if (!rawPart || rawPart.includes("/")) {
+    return "";
+  }
+  try {
+    return safeString(decodeURIComponent(rawPart)).slice(0, 120);
+  } catch (error) {
+    return "";
+  }
+}
+
+function parseAdminAiDraftPublishIdFromPath(pathname) {
+  const prefix = "/api/admin/ai-drafts/";
+  const suffix = "/publish";
+  if (!safeString(pathname).startsWith(prefix) || !safeString(pathname).endsWith(suffix)) {
+    return "";
+  }
+  const rawPart = String(pathname || "").slice(prefix.length, -suffix.length);
   if (!rawPart || rawPart.includes("/")) {
     return "";
   }
@@ -2089,6 +2490,67 @@ function getCatalogDeleteIntentGuard(currentData, nextData, expectedRemovedProdu
     expectedRemovedProducts: expected,
     removedCount,
     removedIdsSample: removedIds.slice(0, STORE_DELETE_INTENT_SAMPLE_LIMIT)
+  };
+}
+
+function getCatalogImageIntegrityGuard(currentData, nextData) {
+  const safeCurrentData = validateStoreData(currentData);
+  const safeNextData = validateStoreData(nextData);
+  const currentProducts = Array.isArray(safeCurrentData.products)
+    ? safeCurrentData.products
+    : [];
+  const nextProducts = Array.isArray(safeNextData.products)
+    ? safeNextData.products
+    : [];
+
+  const nextProductsById = new Map();
+  for (const product of nextProducts) {
+    const productId = safeString(product && product.id).slice(0, 120);
+    if (!productId) {
+      continue;
+    }
+    nextProductsById.set(productId, product);
+  }
+
+  let checkedCount = 0;
+  const brokenProducts = [];
+  for (const currentProduct of currentProducts) {
+    const productId = safeString(currentProduct && currentProduct.id).slice(0, 120);
+    if (!productId || !nextProductsById.has(productId)) {
+      continue;
+    }
+
+    const currentImage = normalizePersistedProductImage(currentProduct.image, "", productId, false);
+    if (!currentImage || isProductImageApiPath(currentImage, productId) || !isRenderableProductImageValue(currentImage, productId)) {
+      continue;
+    }
+
+    checkedCount += 1;
+    const nextProduct = nextProductsById.get(productId);
+    const nextImage = normalizePersistedProductImage(nextProduct && nextProduct.image, "", productId, false);
+    if (nextImage && !isProductImageApiPath(nextImage, productId) && isRenderableProductImageValue(nextImage, productId)) {
+      continue;
+    }
+
+    brokenProducts.push({
+      id: productId,
+      name: safeString(currentProduct && currentProduct.name).slice(0, 160),
+      brand: safeString(currentProduct && currentProduct.brand).slice(0, 160)
+    });
+  }
+
+  const brokenCount = brokenProducts.length;
+  const brokenRatio = checkedCount > 0 ? brokenCount / checkedCount : 0;
+  const blocked = checkedCount > 0
+    && brokenCount >= STORE_IMAGE_GUARD_MIN_BREAK_COUNT
+    && brokenRatio >= STORE_IMAGE_GUARD_MIN_BREAK_RATIO;
+
+  return {
+    blocked,
+    checkedCount,
+    brokenCount,
+    brokenRatio,
+    brokenProductsSample: brokenProducts.slice(0, STORE_IMAGE_GUARD_SAMPLE_LIMIT)
   };
 }
 
@@ -2247,6 +2709,29 @@ async function writeDataFile(filePath, payload) {
   return validated;
 }
 
+async function readAiDraftSeedData() {
+  await fsp.mkdir(DATA_DIR, { recursive: true });
+
+  try {
+    const raw = await fsp.readFile(AI_DRAFTS_FILE, "utf8");
+    return normalizeStoredAiDraftList(JSON.parse(raw));
+  } catch (error) {
+    return [];
+  }
+}
+
+async function writeAiDraftsFile(filePath, payload) {
+  const validated = normalizeStoredAiDraftList(payload);
+  const tempPath = filePath + ".tmp";
+  const body = JSON.stringify(validated, null, 2);
+
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.writeFile(tempPath, body, "utf8");
+  await fsp.rename(tempPath, filePath);
+
+  return validated;
+}
+
 class FileStoreRepository {
   constructor(filePath) {
     this.filePath = filePath;
@@ -2306,6 +2791,36 @@ class FileStoreRepository {
       source: safeString(source || "manual_admin") || "manual_admin",
       productsCount: getProductsCount(current)
     };
+  }
+
+  async findHistoricalProductImage(productId) {
+    const safeProductId = safeString(productId).slice(0, 120);
+    if (!safeProductId) {
+      return "";
+    }
+
+    try {
+      const files = (await fsp.readdir(this.historyDir))
+        .filter((name) => name.startsWith("store_state_") && name.endsWith(".json"))
+        .sort()
+        .reverse();
+
+      for (const name of files) {
+        try {
+          const raw = await fsp.readFile(path.join(this.historyDir, name), "utf8");
+          const image = extractValidProductImageFromStoreData(JSON.parse(raw), safeProductId);
+          if (image) {
+            return image;
+          }
+        } catch (error) {
+          // Skip invalid snapshots and continue searching older history.
+        }
+      }
+    } catch (error) {
+      return "";
+    }
+
+    return "";
   }
 
   async close() {
@@ -2414,6 +2929,176 @@ class PostgresStoreRepository {
     };
   }
 
+  async findHistoricalProductImage(productId) {
+    const safeProductId = safeString(productId).slice(0, 120);
+    if (!safeProductId) {
+      return "";
+    }
+
+    const result = await this.pool.query(
+      "SELECT payload FROM " + DB_HISTORY_TABLE + " "
+      + "ORDER BY changed_at DESC, snapshot_id DESC "
+      + "LIMIT $1",
+      [STORE_HISTORY_MAX_ROWS]
+    );
+
+    for (const row of result.rows) {
+      try {
+        const image = extractValidProductImageFromStoreData(row.payload, safeProductId);
+        if (image) {
+          return image;
+        }
+      } catch (error) {
+        // Skip unreadable history rows and continue.
+      }
+    }
+
+    return "";
+  }
+
+  async close() {
+    await this.pool.end();
+  }
+}
+
+class FileAiDraftRepository {
+  constructor(filePath) {
+    this.filePath = filePath;
+  }
+
+  async init() {
+    await fsp.mkdir(path.dirname(this.filePath), { recursive: true });
+
+    try {
+      const raw = await fsp.readFile(this.filePath, "utf8");
+      normalizeStoredAiDraftList(JSON.parse(raw));
+    } catch (error) {
+      await writeAiDraftsFile(this.filePath, await readAiDraftSeedData());
+    }
+  }
+
+  async list() {
+    const raw = await fsp.readFile(this.filePath, "utf8");
+    return normalizeStoredAiDraftList(JSON.parse(raw));
+  }
+
+  async getById(draftId) {
+    const safeDraftId = safeString(draftId).slice(0, 120);
+    if (!safeDraftId) {
+      return null;
+    }
+
+    const items = await this.list();
+    return items.find((item) => safeString(item && item.id) === safeDraftId) || null;
+  }
+
+  async save(draft) {
+    const safeDraft = sanitizeIncomingAiDraft(draft);
+    const items = await this.list();
+    const nextItems = items.filter((item) => safeString(item && item.id) !== safeDraft.id);
+    nextItems.unshift(safeDraft);
+    await writeAiDraftsFile(this.filePath, nextItems);
+    return safeDraft;
+  }
+
+  async delete(draftId) {
+    const safeDraftId = safeString(draftId).slice(0, 120);
+    if (!safeDraftId) {
+      return false;
+    }
+
+    const items = await this.list();
+    const nextItems = items.filter((item) => safeString(item && item.id) !== safeDraftId);
+    if (nextItems.length === items.length) {
+      return false;
+    }
+    await writeAiDraftsFile(this.filePath, nextItems);
+    return true;
+  }
+
+  async close() {
+    return;
+  }
+}
+
+class PostgresAiDraftRepository {
+  constructor(pool) {
+    this.pool = pool;
+  }
+
+  async init() {
+    await this.pool.query("SELECT 1");
+    await this.pool.query(
+      "CREATE TABLE IF NOT EXISTS " + AI_DRAFTS_DB_TABLE + " ("
+      + "draft_id TEXT PRIMARY KEY, "
+      + "payload JSONB NOT NULL, "
+      + "status TEXT NOT NULL DEFAULT 'pending', "
+      + "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+      + "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+      + ")"
+    );
+    await this.pool.query(
+      "CREATE INDEX IF NOT EXISTS " + AI_DRAFTS_DB_TABLE + "_status_updated_at_idx "
+      + "ON " + AI_DRAFTS_DB_TABLE + " (status, updated_at DESC)"
+    );
+  }
+
+  async list() {
+    const result = await this.pool.query(
+      "SELECT payload FROM " + AI_DRAFTS_DB_TABLE + " ORDER BY updated_at DESC, draft_id DESC"
+    );
+    return normalizeStoredAiDraftList(result.rows.map((row) => row.payload));
+  }
+
+  async getById(draftId) {
+    const safeDraftId = safeString(draftId).slice(0, 120);
+    if (!safeDraftId) {
+      return null;
+    }
+
+    const result = await this.pool.query(
+      "SELECT payload FROM " + AI_DRAFTS_DB_TABLE + " WHERE draft_id = $1 LIMIT 1",
+      [safeDraftId]
+    );
+
+    if (result.rowCount <= 0) {
+      return null;
+    }
+
+    return normalizeStoredAiDraft(result.rows[0].payload);
+  }
+
+  async save(draft) {
+    const safeDraft = sanitizeIncomingAiDraft(draft);
+    const result = await this.pool.query(
+      "INSERT INTO " + AI_DRAFTS_DB_TABLE + " (draft_id, payload, status, created_at, updated_at) "
+      + "VALUES ($1, $2::jsonb, $3, $4::timestamptz, NOW()) "
+      + "ON CONFLICT (draft_id) DO UPDATE SET payload = EXCLUDED.payload, status = EXCLUDED.status, updated_at = NOW() "
+      + "RETURNING payload",
+      [
+        safeDraft.id,
+        JSON.stringify(safeDraft),
+        safeDraft.status,
+        safeDraft.createdAt
+      ]
+    );
+
+    return normalizeStoredAiDraft(result.rows[0].payload);
+  }
+
+  async delete(draftId) {
+    const safeDraftId = safeString(draftId).slice(0, 120);
+    if (!safeDraftId) {
+      return false;
+    }
+
+    const result = await this.pool.query(
+      "DELETE FROM " + AI_DRAFTS_DB_TABLE + " WHERE draft_id = $1",
+      [safeDraftId]
+    );
+    return result.rowCount > 0;
+  }
+
   async close() {
     await this.pool.end();
   }
@@ -2453,6 +3138,13 @@ class CachedStoreRepository {
 
   async createSnapshot(source) {
     return this.innerRepository.createSnapshot(source);
+  }
+
+  async findHistoricalProductImage(productId) {
+    if (!this.innerRepository || typeof this.innerRepository.findHistoricalProductImage !== "function") {
+      return "";
+    }
+    return this.innerRepository.findHistoricalProductImage(productId);
   }
 
   async close() {
@@ -2591,6 +3283,53 @@ async function createStoreRepository() {
   const repository = new CachedStoreRepository(new FileStoreRepository(DATA_FILE));
   await repository.init();
   console.log("Storage mode: file (" + DATA_FILE + ")");
+  return repository;
+}
+
+async function createAiDraftRepository() {
+  const strictDatabaseMode = isStrictDatabaseMode();
+
+  if (isForceFileStorage()) {
+    const repository = new FileAiDraftRepository(AI_DRAFTS_FILE);
+    await repository.init();
+    console.log("AI drafts storage mode: file (" + AI_DRAFTS_FILE + "), FORCE_FILE_STORAGE enabled");
+    return repository;
+  }
+
+  if (isDatabaseConfigured()) {
+    let pool = null;
+    try {
+      const Pool = loadPgPool();
+      pool = new Pool(buildDatabaseConfig());
+      const repository = new PostgresAiDraftRepository(pool);
+      await repository.init();
+      console.log("AI drafts storage mode: PostgreSQL");
+      return repository;
+    } catch (error) {
+      console.error("AI drafts PostgreSQL init failed. Reason:", error && error.message ? error.message : error);
+      if (pool) {
+        try {
+          await pool.end();
+        } catch (closeError) {
+          console.error("Failed to close AI drafts PostgreSQL pool after init error:", closeError);
+        }
+      }
+
+      if (strictDatabaseMode) {
+        throw new Error("AI_DRAFTS_DATABASE_INIT_FAILED_IN_STRICT_MODE");
+      }
+
+      console.warn("AI drafts fallback to file storage is enabled in non-production mode.");
+    }
+  }
+
+  if (strictDatabaseMode) {
+    throw new Error("DATABASE_CONFIG_REQUIRED_IN_STRICT_MODE");
+  }
+
+  const repository = new FileAiDraftRepository(AI_DRAFTS_FILE);
+  await repository.init();
+  console.log("AI drafts storage mode: file (" + AI_DRAFTS_FILE + ")");
   return repository;
 }
 
@@ -2757,6 +3496,14 @@ async function handleStoreApi(req, res, requestUrl) {
           throw guardError;
         }
 
+        const imageIntegrityGuard = getCatalogImageIntegrityGuard(currentData, nextPayload);
+        if (imageIntegrityGuard.blocked && !forceReplaceFromPayload) {
+          const guardError = new Error("CATALOG_IMAGE_INTEGRITY_BLOCKED");
+          guardError.code = "CATALOG_IMAGE_INTEGRITY_BLOCKED";
+          guardError.details = imageIntegrityGuard;
+          throw guardError;
+        }
+
         return storeRepository.write(nextPayload, {
           previousPayload: currentData,
           source: "api_put"
@@ -2797,6 +3544,18 @@ async function handleStoreApi(req, res, requestUrl) {
           expectedRemovedProducts: Number.isFinite(details.expectedRemovedProducts) ? details.expectedRemovedProducts : null,
           removedCount: Number.isFinite(details.removedCount) ? details.removedCount : 0,
           removedIdsSample: Array.isArray(details.removedIdsSample) ? details.removedIdsSample : []
+        });
+        return;
+      }
+      if (error.code === "CATALOG_IMAGE_INTEGRITY_BLOCKED") {
+        const details = error.details || {};
+        sendJson(res, 409, {
+          error: "CATALOG_IMAGE_INTEGRITY_BLOCKED",
+          message: "Blocked catalog save because too many product images would become unavailable. Refresh admin and retry.",
+          checkedCount: Number.isFinite(details.checkedCount) ? details.checkedCount : 0,
+          brokenCount: Number.isFinite(details.brokenCount) ? details.brokenCount : 0,
+          brokenRatio: Number.isFinite(details.brokenRatio) ? details.brokenRatio : 0,
+          brokenProductsSample: Array.isArray(details.brokenProductsSample) ? details.brokenProductsSample : []
         });
         return;
       }
@@ -2946,6 +3705,225 @@ async function handleAdminCatalogApi(req, res, requestUrl) {
   });
 }
 
+async function handleAdminAiDraftsApi(req, res) {
+  if (!aiDraftRepository) {
+    sendJson(res, 503, { error: "AI_DRAFTS_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  if (req.method === "GET" || req.method === "HEAD") {
+    const items = await aiDraftRepository.list();
+    sendJson(res, 200, {
+      ok: true,
+      items
+    });
+    return;
+  }
+
+  if (!ensureJsonBodyRequest(req, res)) {
+    return;
+  }
+
+  let raw;
+  let parsed;
+
+  try {
+    raw = await readRequestBody(req);
+  } catch (error) {
+    if (handleBodyReadFailure(res, error)) {
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    parsed = JSON.parse(raw || "{}");
+  } catch (error) {
+    sendJson(res, 400, { error: "INVALID_JSON" });
+    return;
+  }
+
+  try {
+    const result = await runSerializedStoreMutation(async () => {
+      const incomingDraft = parsed && typeof parsed === "object" && parsed.draft ? parsed.draft : parsed;
+      const incomingId = safeString(incomingDraft && incomingDraft.id).slice(0, 120);
+      const existingDraft = incomingId ? await aiDraftRepository.getById(incomingId) : null;
+      const nextDraft = sanitizeIncomingAiDraft(
+        Object.assign({}, incomingDraft, {
+          status: existingDraft && existingDraft.status === "published"
+            ? "published"
+            : normalizeAiDraftStatus(incomingDraft && incomingDraft.status)
+        }),
+        existingDraft
+      );
+      const created = !existingDraft;
+      await aiDraftRepository.save(nextDraft);
+      return {
+        created,
+        draft: nextDraft
+      };
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      created: result.created,
+      draft: result.draft
+    });
+  } catch (error) {
+    if (error.message === "INVALID_AI_DRAFT_PAYLOAD") {
+      sendJson(res, 400, {
+        error: "INVALID_AI_DRAFT_PAYLOAD",
+        message: "Invalid AI draft payload"
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
+async function handleAdminAiDraftByIdApi(req, res, requestUrl) {
+  if (!aiDraftRepository) {
+    sendJson(res, 503, { error: "AI_DRAFTS_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "DELETE") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  const draftId = parseAdminAiDraftIdFromPath(requestUrl && requestUrl.pathname);
+  if (!draftId) {
+    sendJson(res, 400, { error: "INVALID_AI_DRAFT_ID" });
+    return;
+  }
+
+  const deleted = await runSerializedStoreMutation(async () => {
+    return aiDraftRepository.delete(draftId);
+  });
+
+  if (!deleted) {
+    sendJson(res, 404, { error: "AI_DRAFT_NOT_FOUND" });
+    return;
+  }
+
+  sendJson(res, 200, {
+    ok: true,
+    id: draftId
+  });
+}
+
+async function handleAdminAiDraftPublishApi(req, res, requestUrl) {
+  if (!storeRepository || !aiDraftRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  const draftId = parseAdminAiDraftPublishIdFromPath(requestUrl && requestUrl.pathname);
+  if (!draftId) {
+    sendJson(res, 400, { error: "INVALID_AI_DRAFT_ID" });
+    return;
+  }
+
+  try {
+    const result = await runSerializedStoreMutation(async () => {
+      const draft = await aiDraftRepository.getById(draftId);
+      if (!draft) {
+        const notFoundError = new Error("AI_DRAFT_NOT_FOUND");
+        notFoundError.code = "AI_DRAFT_NOT_FOUND";
+        throw notFoundError;
+      }
+
+      if (draft.status === "published") {
+        const conflictError = new Error("AI_DRAFT_ALREADY_PUBLISHED");
+        conflictError.code = "AI_DRAFT_ALREADY_PUBLISHED";
+        throw conflictError;
+      }
+
+      if (draft.status !== "ready_to_publish") {
+        const statusError = new Error("AI_DRAFT_NOT_READY");
+        statusError.code = "AI_DRAFT_NOT_READY";
+        throw statusError;
+      }
+
+      const currentData = await storeRepository.read();
+      const nextData = cloneData(validateStoreData(currentData));
+      const draftProduct = buildProductPayloadFromAiDraft(draft, nextData.products);
+      const nextProduct = sanitizeIncomingAdminProduct(draftProduct, null);
+      nextData.products.unshift(nextProduct);
+
+      await storeRepository.write(nextData, {
+        previousPayload: currentData,
+        source: "ai_draft_publish"
+      });
+
+      const nextDraft = sanitizeIncomingAiDraft(
+        Object.assign({}, draft, {
+          status: "published"
+        }),
+        draft
+      );
+      await aiDraftRepository.save(nextDraft);
+
+      return {
+        draft: nextDraft,
+        product: nextProduct,
+        total: nextData.products.length
+      };
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      draft: result.draft,
+      product: result.product,
+      total: result.total
+    });
+  } catch (error) {
+    if (error && error.code === "AI_DRAFT_NOT_FOUND") {
+      sendJson(res, 404, { error: "AI_DRAFT_NOT_FOUND" });
+      return;
+    }
+    if (error && error.code === "AI_DRAFT_ALREADY_PUBLISHED") {
+      sendJson(res, 409, { error: "AI_DRAFT_ALREADY_PUBLISHED" });
+      return;
+    }
+    if (error && error.code === "AI_DRAFT_NOT_READY") {
+      sendJson(res, 409, { error: "AI_DRAFT_NOT_READY_TO_PUBLISH" });
+      return;
+    }
+    if (error.message === "INVALID_PRODUCT_PAYLOAD" || error.message === "INVALID_AI_DRAFT_PAYLOAD") {
+      sendJson(res, 400, {
+        error: "AI_DRAFT_CANNOT_BE_PUBLISHED",
+        message: "Draft does not contain enough product data to publish."
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
 async function handleAdminProductsApi(req, res) {
   if (!storeRepository) {
     sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
@@ -3003,6 +3981,13 @@ async function handleAdminProductsApi(req, res) {
         }
       }
       const nextProduct = sanitizeIncomingAdminProduct(incomingProduct, existingProductForSanitize);
+      const nextProductImage = normalizePersistedProductImage(nextProduct.image, "", nextProduct.id, false);
+      if (!nextProductImage || isProductImageApiPath(nextProductImage, nextProduct.id) || !isRenderableProductImageValue(nextProductImage, nextProduct.id)) {
+        const imageError = new Error("PRODUCT_IMAGE_UNRECOVERABLE");
+        imageError.code = "PRODUCT_IMAGE_UNRECOVERABLE";
+        throw imageError;
+      }
+      nextProduct.image = nextProductImage;
       const created = productIndex < 0;
 
       if (created) {
@@ -3030,6 +4015,13 @@ async function handleAdminProductsApi(req, res) {
       product: result.product
     });
   } catch (error) {
+    if (error && error.code === "PRODUCT_IMAGE_UNRECOVERABLE") {
+      sendJson(res, 400, {
+        error: "PRODUCT_IMAGE_UNRECOVERABLE",
+        message: "Product image became unavailable during save. Re-upload the image or refresh product data and retry."
+      });
+      return;
+    }
     if (error.message === "INVALID_PRODUCT_PAYLOAD") {
       sendJson(res, 400, {
         error: "INVALID_PRODUCT_PAYLOAD",
@@ -3351,6 +4343,45 @@ async function handleAdminSnapshotApi(req, res) {
       ? Number(snapshot.productsCount)
       : 0
   });
+}
+
+async function handleAdminImageIntegrityApi(req, res, requestUrl) {
+  if (!storeRepository) {
+    sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  const pathname = requestUrl && requestUrl.pathname ? String(requestUrl.pathname) : "";
+  const isRepairPath = pathname === "/api/admin/image-integrity/repair";
+
+  if (req.method === "GET" && pathname === "/api/admin/image-integrity") {
+    const report = await collectProductImageIntegrityReport(storeRepository);
+    sendJson(res, 200, Object.assign({ ok: true }, report));
+    return;
+  }
+
+  if (req.method === "POST" && isRepairPath) {
+    const result = await runSerializedStoreMutation(async () => {
+      if (storeRepository && typeof storeRepository.createSnapshot === "function") {
+        await storeRepository.createSnapshot("pre_image_integrity_repair");
+      }
+      return repairBrokenProductImagesFromHistory(storeRepository);
+    });
+    const report = await collectProductImageIntegrityReport(storeRepository);
+    sendJson(res, 200, {
+      ok: true,
+      repaired: Number.isFinite(result && result.repaired) ? result.repaired : 0,
+      skipped: Number.isFinite(result && result.skipped) ? result.skipped : 0,
+      report
+    });
+    return;
+  }
+
+  sendText(res, 405, "Method Not Allowed");
 }
 
 async function handleProductReviewsApi(req, res) {
@@ -3823,6 +4854,21 @@ async function requestHandler(req, res) {
       return;
     }
 
+    if (requestUrl.pathname === "/api/admin/ai-drafts") {
+      await handleAdminAiDraftsApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname.startsWith("/api/admin/ai-drafts/") && requestUrl.pathname.endsWith("/publish")) {
+      await handleAdminAiDraftPublishApi(req, res, requestUrl);
+      return;
+    }
+
+    if (requestUrl.pathname.startsWith("/api/admin/ai-drafts/")) {
+      await handleAdminAiDraftByIdApi(req, res, requestUrl);
+      return;
+    }
+
     if (requestUrl.pathname === "/api/admin/products") {
       await handleAdminProductsApi(req, res);
       return;
@@ -3845,6 +4891,14 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/admin/snapshot") {
       await handleAdminSnapshotApi(req, res);
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/admin/image-integrity"
+      || requestUrl.pathname === "/api/admin/image-integrity/repair"
+    ) {
+      await handleAdminImageIntegrityApi(req, res, requestUrl);
       return;
     }
 
@@ -3891,6 +4945,15 @@ async function requestHandler(req, res) {
 
 async function start() {
   storeRepository = await createStoreRepository();
+  try {
+    const repairResult = await repairBrokenProductImagesFromHistory(storeRepository);
+    if (repairResult && repairResult.repaired > 0) {
+      console.log("Recovered product images from history:", repairResult.repaired);
+    }
+  } catch (error) {
+    console.warn("Product image history repair skipped:", error && error.message ? error.message : error);
+  }
+  aiDraftRepository = await createAiDraftRepository();
 
   httpServer = http.createServer((req, res) => {
     res.__request = req;
@@ -3935,6 +4998,14 @@ async function gracefulShutdown(signal) {
     }
   } catch (error) {
     console.error("Failed to close storage cleanly:", error);
+  }
+
+  try {
+    if (aiDraftRepository && typeof aiDraftRepository.close === "function") {
+      await aiDraftRepository.close();
+    }
+  } catch (error) {
+    console.error("Failed to close AI drafts storage cleanly:", error);
   }
 
   process.exit(0);
