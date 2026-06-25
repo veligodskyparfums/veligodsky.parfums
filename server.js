@@ -74,6 +74,8 @@ const MAX_AI_DRAFT_ANALYSIS_DEPTH = 5;
 const MAX_AI_DRAFT_ANALYSIS_KEYS = 80;
 const MAX_AI_DRAFT_ANALYSIS_STRING_LENGTH = 800;
 const MAX_AI_DRAFT_ANALYSIS_JSON_LENGTH = 20000;
+const TELEGRAM_WEBHOOK_PATH = "/api/telegram/webhook";
+const TELEGRAM_WEBHOOK_SECRET_HEADER = "x-telegram-bot-api-secret-token";
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -129,6 +131,12 @@ const RATE_LIMIT_RULES = {
     max: 12,
     windowMs: 60 * 1000,
     message: "Too many homepage review submissions"
+  },
+  telegramWebhook: {
+    name: "telegram_webhook",
+    max: 120,
+    windowMs: 60 * 1000,
+    message: "Too many Telegram webhook requests"
   },
   reviewCaptcha: {
     name: "review_captcha",
@@ -632,6 +640,10 @@ function getRateLimitRule(pathname, method) {
     return RATE_LIMIT_RULES.homepageReviews;
   }
 
+  if (safePath === TELEGRAM_WEBHOOK_PATH && safeMethod === "POST") {
+    return RATE_LIMIT_RULES.telegramWebhook;
+  }
+
   if (safePath === "/api/review-captcha" && safeMethod === "GET") {
     return RATE_LIMIT_RULES.reviewCaptcha;
   }
@@ -775,6 +787,15 @@ function clearFailedAdminLogins(clientIp) {
 
 function safeString(value) {
   return String(value || "").trim();
+}
+
+function timingSafeEqualStrings(left, right) {
+  const leftBuffer = Buffer.from(safeString(left), "utf8");
+  const rightBuffer = Buffer.from(safeString(right), "utf8");
+  if (leftBuffer.length <= 0 || rightBuffer.length <= 0 || leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function clampInteger(value, min, max, fallback) {
@@ -2007,6 +2028,142 @@ function normalizeAiDraftStatus(value) {
   return "pending";
 }
 
+function getTelegramWebhookSecret() {
+  return safeString(process.env.TELEGRAM_WEBHOOK_SECRET).slice(0, 512);
+}
+
+function getTelegramPhotoMeta(post) {
+  const safePost = post && typeof post === "object" ? post : null;
+  const photos = safePost && Array.isArray(safePost.photo) ? safePost.photo : [];
+  if (!photos.length) {
+    return null;
+  }
+
+  const largest = photos.reduce((best, current) => {
+    if (!best) {
+      return current;
+    }
+    const bestArea = Math.max(0, Number(best.width) || 0) * Math.max(0, Number(best.height) || 0);
+    const currentArea = Math.max(0, Number(current.width) || 0) * Math.max(0, Number(current.height) || 0);
+    return currentArea >= bestArea ? current : best;
+  }, null);
+
+  if (!largest) {
+    return null;
+  }
+
+  return {
+    fileId: safeString(largest.file_id).slice(0, 400),
+    fileUniqueId: safeString(largest.file_unique_id).slice(0, 400),
+    width: Math.max(0, Number(largest.width) || 0),
+    height: Math.max(0, Number(largest.height) || 0),
+    fileSize: Math.max(0, Number(largest.file_size) || 0),
+    variantsCount: photos.length
+  };
+}
+
+function buildTelegramSourceUrl(post) {
+  const safePost = post && typeof post === "object" ? post : null;
+  if (!safePost) {
+    return "";
+  }
+
+  const username = safeString(safePost.chat && safePost.chat.username).replace(/^@+/, "");
+  const messageId = Math.max(0, Number(safePost.message_id) || 0);
+  if (!username || !messageId) {
+    return "";
+  }
+
+  return "https://t.me/" + username + "/" + messageId;
+}
+
+function buildTelegramDraftId(post) {
+  const safePost = post && typeof post === "object" ? post : null;
+  const rawChatId = safeString(safePost && safePost.chat && safePost.chat.id);
+  const rawMessageId = safeString(safePost && safePost.message_id);
+  const chatId = rawChatId.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 80);
+  const messageId = rawMessageId.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 40);
+  if (!chatId || !messageId) {
+    return generateAiDraftId();
+  }
+  return "tg_" + chatId + "_" + messageId;
+}
+
+function extractTelegramDraftSource(update) {
+  const safeUpdate = update && typeof update === "object" ? update : null;
+  if (!safeUpdate) {
+    return null;
+  }
+
+  if (safeUpdate.channel_post && typeof safeUpdate.channel_post === "object") {
+    return {
+      postType: "channel_post",
+      post: safeUpdate.channel_post
+    };
+  }
+
+  if (safeUpdate.message && typeof safeUpdate.message === "object") {
+    return {
+      postType: "message",
+      post: safeUpdate.message
+    };
+  }
+
+  return null;
+}
+
+function buildTelegramDraftAnalysis(existingAnalysis, update, sourceInfo, photoMeta) {
+  const base = existingAnalysis && typeof existingAnalysis === "object" && !Array.isArray(existingAnalysis)
+    ? cloneData(existingAnalysis)
+    : {};
+  const safePost = sourceInfo && sourceInfo.post && typeof sourceInfo.post === "object" ? sourceInfo.post : {};
+  base.telegram = {
+    updateId: Math.max(0, Number(update && update.update_id) || 0),
+    postType: safeString(sourceInfo && sourceInfo.postType).slice(0, 40),
+    chatId: safeString(safePost.chat && safePost.chat.id).slice(0, 120),
+    chatType: safeString(safePost.chat && safePost.chat.type).slice(0, 80),
+    chatTitle: safeString(safePost.chat && safePost.chat.title).slice(0, 200),
+    chatUsername: safeString(safePost.chat && safePost.chat.username).slice(0, 200),
+    messageId: Math.max(0, Number(safePost.message_id) || 0),
+    mediaGroupId: safeString(safePost.media_group_id).slice(0, 120),
+    postedAtUnix: Math.max(0, Number(safePost.date) || 0),
+    hasPhoto: Boolean(photoMeta && photoMeta.fileId),
+    photo: photoMeta ? {
+      fileId: photoMeta.fileId,
+      fileUniqueId: photoMeta.fileUniqueId,
+      width: photoMeta.width,
+      height: photoMeta.height,
+      fileSize: photoMeta.fileSize,
+      variantsCount: photoMeta.variantsCount
+    } : null
+  };
+  return base;
+}
+
+function buildTelegramAiDraftPayload(update, sourceInfo, existingDraft) {
+  const safeExistingDraft = existingDraft && typeof existingDraft === "object" ? existingDraft : null;
+  const safePost = sourceInfo && sourceInfo.post && typeof sourceInfo.post === "object" ? sourceInfo.post : {};
+  const rawText = safeString(safePost.text || safePost.caption).slice(0, MAX_AI_DRAFT_RAW_TEXT_LENGTH);
+  const photoMeta = getTelegramPhotoMeta(safePost);
+
+  return {
+    id: buildTelegramDraftId(safePost),
+    source: "telegram",
+    sourceUrl: buildTelegramSourceUrl(safePost),
+    rawText,
+    confidenceScore: 0,
+    status: safeExistingDraft ? safeExistingDraft.status : "pending",
+    analysis: buildTelegramDraftAnalysis(
+      safeExistingDraft && safeExistingDraft.analysis,
+      update,
+      sourceInfo,
+      photoMeta
+    ),
+    notes: safeExistingDraft && Array.isArray(safeExistingDraft.notes) ? safeExistingDraft.notes : [],
+    image: safeExistingDraft ? safeExistingDraft.image : ""
+  };
+}
+
 function normalizeAiDraftConfidenceScore(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -2614,6 +2771,25 @@ function ensureAdminAuthorized(req, res) {
     sendJson(res, 401, { error: "UNAUTHORIZED" });
     return false;
   }
+  return true;
+}
+
+function ensureTelegramWebhookAuthorized(req, res) {
+  const expectedSecret = getTelegramWebhookSecret();
+  if (!expectedSecret) {
+    sendJson(res, 503, {
+      error: "TELEGRAM_WEBHOOK_NOT_CONFIGURED",
+      message: "TELEGRAM_WEBHOOK_SECRET is not configured"
+    });
+    return false;
+  }
+
+  const actualSecret = safeString(req && req.headers && req.headers[TELEGRAM_WEBHOOK_SECRET_HEADER]);
+  if (!timingSafeEqualStrings(actualSecret, expectedSecret)) {
+    sendJson(res, 403, { error: "TELEGRAM_WEBHOOK_FORBIDDEN" });
+    return false;
+  }
+
   return true;
 }
 
@@ -3924,6 +4100,102 @@ async function handleAdminAiDraftPublishApi(req, res, requestUrl) {
   }
 }
 
+async function handleTelegramWebhookApi(req, res) {
+  if (!aiDraftRepository) {
+    sendJson(res, 503, { error: "AI_DRAFTS_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureTelegramWebhookAuthorized(req, res)) {
+    console.warn("Telegram webhook rejected: invalid or missing secret token");
+    return;
+  }
+
+  if (!ensureJsonBodyRequest(req, res)) {
+    return;
+  }
+
+  let raw;
+  let parsed;
+
+  try {
+    raw = await readRequestBody(req);
+  } catch (error) {
+    if (handleBodyReadFailure(res, error)) {
+      console.error("Telegram webhook body read failed:", error && error.message ? error.message : error);
+      return;
+    }
+    console.error("Telegram webhook body read failed:", error);
+    throw error;
+  }
+
+  try {
+    parsed = JSON.parse(raw || "{}");
+  } catch (error) {
+    console.error("Telegram webhook received invalid JSON");
+    sendJson(res, 400, { error: "INVALID_JSON" });
+    return;
+  }
+
+  const sourceInfo = extractTelegramDraftSource(parsed);
+  if (!sourceInfo) {
+    sendJson(res, 200, {
+      ok: true,
+      ignored: true,
+      reason: "UNSUPPORTED_UPDATE_TYPE"
+    });
+    return;
+  }
+
+  try {
+    const result = await runSerializedStoreMutation(async () => {
+      const draftId = buildTelegramDraftId(sourceInfo.post);
+      const existingDraft = draftId ? await aiDraftRepository.getById(draftId) : null;
+      const nextDraft = sanitizeIncomingAiDraft(
+        buildTelegramAiDraftPayload(parsed, sourceInfo, existingDraft),
+        existingDraft
+      );
+      const created = !existingDraft;
+      await aiDraftRepository.save(nextDraft);
+      return {
+        created,
+        draft: nextDraft
+      };
+    });
+
+    const telegramInfo = result.draft && result.draft.analysis && result.draft.analysis.telegram
+      ? result.draft.analysis.telegram
+      : null;
+
+    console.log("Telegram AI draft saved:", {
+      draftId: result.draft && result.draft.id,
+      created: result.created,
+      sourceUrl: result.draft && result.draft.sourceUrl,
+      hasPhoto: Boolean(telegramInfo && telegramInfo.hasPhoto),
+      messageId: telegramInfo && telegramInfo.messageId
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      ignored: false,
+      created: result.created,
+      draftId: result.draft && result.draft.id,
+      status: result.draft && result.draft.status
+    });
+  } catch (error) {
+    console.error("Telegram webhook draft creation failed:", {
+      message: error && error.message ? error.message : String(error),
+      stack: error && error.stack ? error.stack : ""
+    });
+    throw error;
+  }
+}
+
 async function handleAdminProductsApi(req, res) {
   if (!storeRepository) {
     sendJson(res, 503, { error: "STORE_UNAVAILABLE" });
@@ -4919,6 +5191,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/client-errors") {
       await handleClientErrorsApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === TELEGRAM_WEBHOOK_PATH) {
+      await handleTelegramWebhookApi(req, res);
       return;
     }
 
