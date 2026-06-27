@@ -76,6 +76,17 @@ const MAX_AI_DRAFT_ANALYSIS_STRING_LENGTH = 800;
 const MAX_AI_DRAFT_ANALYSIS_JSON_LENGTH = 20000;
 const TELEGRAM_WEBHOOK_PATH = "/api/telegram/webhook";
 const TELEGRAM_WEBHOOK_SECRET_HEADER = "x-telegram-bot-api-secret-token";
+const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
+const EXTERNAL_FETCH_TIMEOUT_MS = Math.max(5 * 1000, Number(process.env.EXTERNAL_FETCH_TIMEOUT_MS || 25 * 1000));
+const MAX_TELEGRAM_ANALYSIS_IMAGE_BYTES = Math.max(256 * 1024, Number(process.env.MAX_TELEGRAM_ANALYSIS_IMAGE_BYTES || 6 * 1024 * 1024));
+const OPENAI_AI_DRAFT_ANALYZE_MODEL = safeString(process.env.OPENAI_AI_DRAFT_ANALYZE_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini").slice(0, 120) || "gpt-4.1-mini";
+const OPENAI_AI_DRAFT_READY_THRESHOLD = Math.max(0, Math.min(1, Number(process.env.OPENAI_AI_DRAFT_READY_THRESHOLD || 0.8) || 0.8));
+const DEFAULT_AI_IMAGE_GENERATION = Object.freeze({
+  background: "black",
+  backgroundHex: "#050505",
+  style: "luxury perfume product photo"
+});
 
 const RATE_LIMIT_RULES = {
   adminPanel: {
@@ -2164,6 +2175,481 @@ function buildTelegramAiDraftPayload(update, sourceInfo, existingDraft) {
   };
 }
 
+function getTelegramBotToken() {
+  return safeString(process.env.TELEGRAM_BOT_TOKEN).slice(0, 512);
+}
+
+function getOpenAiApiKey() {
+  return safeString(process.env.OPENAI_API_KEY).slice(0, 512);
+}
+
+async function fetchExternalResource(url, options) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, EXTERNAL_FETCH_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, Object.assign({}, options || {}, {
+      signal: controller.signal
+    }));
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      const timeoutError = new Error("EXTERNAL_FETCH_TIMEOUT");
+      timeoutError.code = "EXTERNAL_FETCH_TIMEOUT";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchTelegramFileUrl(fileId) {
+  const safeFileId = safeString(fileId).slice(0, 400);
+  const botToken = getTelegramBotToken();
+  if (!safeFileId) {
+    return null;
+  }
+  if (!botToken) {
+    const missingTokenError = new Error("TELEGRAM_BOT_TOKEN_MISSING");
+    missingTokenError.code = "TELEGRAM_BOT_TOKEN_MISSING";
+    throw missingTokenError;
+  }
+
+  const response = await fetchExternalResource(
+    TELEGRAM_API_BASE_URL + "/bot" + botToken + "/getFile?file_id=" + encodeURIComponent(safeFileId),
+    {
+      headers: {
+        "Accept": "application/json"
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const lookupError = new Error("TELEGRAM_FILE_LOOKUP_FAILED");
+    lookupError.code = "TELEGRAM_FILE_LOOKUP_FAILED";
+    lookupError.status = response.status;
+    throw lookupError;
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+
+  const filePath = safeString(payload && payload.result && payload.result.file_path).slice(0, 1024);
+  if (!filePath) {
+    const missingPathError = new Error("TELEGRAM_FILE_PATH_MISSING");
+    missingPathError.code = "TELEGRAM_FILE_PATH_MISSING";
+    throw missingPathError;
+  }
+
+  return TELEGRAM_API_BASE_URL + "/file/bot" + botToken + "/" + filePath.replace(/^\/+/, "");
+}
+
+function guessImageContentTypeFromUrl(url) {
+  const safeUrl = safeString(url).toLowerCase();
+  if (safeUrl.endsWith(".png")) {
+    return "image/png";
+  }
+  if (safeUrl.endsWith(".webp")) {
+    return "image/webp";
+  }
+  if (safeUrl.endsWith(".gif")) {
+    return "image/gif";
+  }
+  return "image/jpeg";
+}
+
+async function downloadImageAsDataUrl(url) {
+  const safeUrl = safeString(url).slice(0, 2000);
+  if (!safeUrl) {
+    return null;
+  }
+
+  const response = await fetchExternalResource(safeUrl, {
+    headers: {
+      "Accept": "image/*,*/*;q=0.8"
+    }
+  });
+
+  if (!response.ok) {
+    const downloadError = new Error("AI_DRAFT_IMAGE_DOWNLOAD_FAILED");
+    downloadError.code = "AI_DRAFT_IMAGE_DOWNLOAD_FAILED";
+    downloadError.status = response.status;
+    throw downloadError;
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const body = Buffer.from(arrayBuffer);
+  if (!body.length) {
+    return null;
+  }
+
+  if (body.length > MAX_TELEGRAM_ANALYSIS_IMAGE_BYTES) {
+    const tooLargeError = new Error("AI_DRAFT_IMAGE_TOO_LARGE");
+    tooLargeError.code = "AI_DRAFT_IMAGE_TOO_LARGE";
+    tooLargeError.size = body.length;
+    throw tooLargeError;
+  }
+
+  const headerContentType = safeString(response.headers.get("content-type")).toLowerCase();
+  const contentType = headerContentType.startsWith("image/")
+    ? headerContentType.split(";")[0]
+    : guessImageContentTypeFromUrl(safeUrl);
+
+  return "data:" + contentType + ";base64," + body.toString("base64");
+}
+
+function getAiDraftTelegramPhotoFileId(draft) {
+  const safeDraft = draft && typeof draft === "object" ? draft : null;
+  const analysis = safeDraft && safeDraft.analysis && typeof safeDraft.analysis === "object" ? safeDraft.analysis : null;
+  const telegram = analysis && telegramHasContent(analysis.telegram) ? analysis.telegram : null;
+  const photo = telegram && telegram.photo && typeof telegram.photo === "object" ? telegram.photo : null;
+  return safeString(photo && photo.fileId).slice(0, 400);
+}
+
+function telegramHasContent(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+async function resolveAiDraftImageInputForAnalysis(draft) {
+  const telegramFileId = getAiDraftTelegramPhotoFileId(draft);
+  if (telegramFileId) {
+    try {
+      const telegramFileUrl = await fetchTelegramFileUrl(telegramFileId);
+      const telegramImageDataUrl = await downloadImageAsDataUrl(telegramFileUrl);
+      if (telegramImageDataUrl) {
+        return {
+          imageUrl: telegramImageDataUrl,
+          source: "telegram",
+          fileId: telegramFileId
+        };
+      }
+    } catch (error) {
+      console.warn("AI draft Telegram photo fetch skipped:", {
+        draftId: draft && draft.id,
+        code: error && error.code ? error.code : "",
+        message: error && error.message ? error.message : String(error)
+      });
+      if (safeString(draft && draft.rawText)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  const directImage = safeString(draft && draft.image).slice(0, MAX_AI_DRAFT_IMAGE_LENGTH);
+  if (directImage && (directImage.startsWith("data:image/") || /^https?:\/\//i.test(directImage))) {
+    return {
+      imageUrl: directImage,
+      source: "draft"
+    };
+  }
+
+  return null;
+}
+
+function buildOpenAiAiDraftAnalysisSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "brand",
+      "name",
+      "description",
+      "volumes",
+      "gender",
+      "bottleType",
+      "notes",
+      "confidenceScore"
+    ],
+    properties: {
+      brand: {
+        type: "string"
+      },
+      name: {
+        type: "string"
+      },
+      description: {
+        type: "string"
+      },
+      volumes: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["ml", "price"],
+          properties: {
+            ml: {
+              type: "number"
+            },
+            price: {
+              type: "number"
+            }
+          }
+        }
+      },
+      gender: {
+        type: "string",
+        enum: ["male", "female", "unisex"]
+      },
+      bottleType: {
+        type: "string",
+        enum: ["decant", "tester", "full"]
+      },
+      notes: {
+        type: "array",
+        items: {
+          type: "string"
+        }
+      },
+      confidenceScore: {
+        type: "number",
+        minimum: 0,
+        maximum: 1
+      }
+    }
+  };
+}
+
+function buildOpenAiAiDraftAnalysisPrompt(draft) {
+  const safeDraft = draft && typeof draft === "object" ? draft : {};
+  const promptParts = [
+    "Ты анализируешь Telegram-пост для импорта товара в luxury perfume shop.",
+    "Извлекай только то, что видно в тексте и на фото, без выдумывания фактов.",
+    "Верни строго JSON по заданной схеме.",
+    "description пиши по-русски, кратко и премиально, 1-2 предложения без markdown.",
+    "volumes включай только там, где можно определить и объём, и цену.",
+    "gender используй только male, female или unisex.",
+    "bottleType используй только decant, tester или full.",
+    "notes — короткие замечания и сомнения, если они есть.",
+    "confidenceScore — число от 0 до 1. Чем больше неопределённость, тем ниже значение.",
+    "",
+    "Telegram rawText:",
+    safeString(safeDraft.rawText).slice(0, MAX_AI_DRAFT_RAW_TEXT_LENGTH) || "(пусто)",
+    "",
+    "Источник:",
+    safeString(safeDraft.sourceUrl) || "(без ссылки)"
+  ];
+
+  return promptParts.join("\n");
+}
+
+function extractOpenAiOutputText(payload) {
+  const directOutputText = safeString(payload && payload.output_text);
+  if (directOutputText) {
+    return directOutputText;
+  }
+
+  const output = Array.isArray(payload && payload.output) ? payload.output : [];
+  const parts = [];
+
+  for (const item of output) {
+    const content = Array.isArray(item && item.content) ? item.content : [];
+    for (const contentItem of content) {
+      if (!contentItem || typeof contentItem !== "object") {
+        continue;
+      }
+      if (typeof contentItem.text === "string" && contentItem.text.trim()) {
+        parts.push(contentItem.text.trim());
+        continue;
+      }
+      if (contentItem.text && typeof contentItem.text === "object" && typeof contentItem.text.value === "string" && contentItem.text.value.trim()) {
+        parts.push(contentItem.text.value.trim());
+      }
+    }
+  }
+
+  return parts.join("\n").trim();
+}
+
+function normalizeOpenAiAiDraftResult(rawResult) {
+  const safeResult = rawResult && typeof rawResult === "object" && !Array.isArray(rawResult) ? rawResult : {};
+  const rawVolumes = Array.isArray(safeResult.volumes) ? safeResult.volumes : [];
+  const seenVolumes = new Set();
+  const volumes = rawVolumes
+    .map(sanitizeProductVolume)
+    .filter(Boolean)
+    .filter((volume) => {
+      const key = String(volume.ml);
+      if (seenVolumes.has(key)) {
+        return false;
+      }
+      seenVolumes.add(key);
+      return true;
+    })
+    .sort((left, right) => left.ml - right.ml);
+
+  let confidenceScore = Number(safeResult.confidenceScore);
+  if (!Number.isFinite(confidenceScore)) {
+    confidenceScore = 0;
+  }
+  confidenceScore = Math.max(0, Math.min(1, Math.round(confidenceScore * 10000) / 10000));
+
+  return {
+    brand: safeString(safeResult.brand).trim().slice(0, MAX_AI_DRAFT_TEXT_LENGTH),
+    name: safeString(safeResult.name).trim().slice(0, MAX_AI_DRAFT_TEXT_LENGTH),
+    description: safeString(safeResult.description).trim().slice(0, MAX_AI_DRAFT_TEXT_LENGTH),
+    volumes,
+    gender: normalizeProductGender(safeResult.gender),
+    bottleType: normalizeProductBottleType(safeResult.bottleType),
+    notes: normalizeAiDraftNotes(safeResult.notes),
+    confidenceScore
+  };
+}
+
+async function requestOpenAiAiDraftAnalysis(draft) {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    const missingKeyError = new Error("OPENAI_API_KEY_MISSING");
+    missingKeyError.code = "OPENAI_API_KEY_MISSING";
+    throw missingKeyError;
+  }
+
+  const safeDraft = draft && typeof draft === "object" ? draft : null;
+  if (!safeDraft) {
+    const invalidDraftError = new Error("AI_DRAFT_NOT_FOUND");
+    invalidDraftError.code = "AI_DRAFT_NOT_FOUND";
+    throw invalidDraftError;
+  }
+
+  const imageInput = await resolveAiDraftImageInputForAnalysis(safeDraft);
+  const rawText = safeString(safeDraft.rawText).trim();
+  if (!rawText && !imageInput) {
+    const missingInputError = new Error("AI_DRAFT_ANALYSIS_INPUT_EMPTY");
+    missingInputError.code = "AI_DRAFT_ANALYSIS_INPUT_EMPTY";
+    throw missingInputError;
+  }
+
+  const prompt = buildOpenAiAiDraftAnalysisPrompt(safeDraft);
+  const content = [
+    {
+      type: "input_text",
+      text: prompt
+    }
+  ];
+
+  if (imageInput && imageInput.imageUrl) {
+    content.push({
+      type: "input_image",
+      image_url: imageInput.imageUrl
+    });
+  }
+
+  const response = await fetchExternalResource(OPENAI_RESPONSES_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "Authorization": "Bearer " + apiKey
+    },
+    body: JSON.stringify({
+      model: OPENAI_AI_DRAFT_ANALYZE_MODEL,
+      input: [
+        {
+          role: "user",
+          content
+        }
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "ai_draft_analysis",
+          strict: true,
+          schema: buildOpenAiAiDraftAnalysisSchema()
+        }
+      }
+    })
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const apiError = new Error("OPENAI_ANALYSIS_REQUEST_FAILED");
+    apiError.code = "OPENAI_ANALYSIS_REQUEST_FAILED";
+    apiError.status = response.status;
+    apiError.payload = payload;
+    throw apiError;
+  }
+
+  const outputText = extractOpenAiOutputText(payload);
+  if (!outputText) {
+    const emptyResponseError = new Error("OPENAI_ANALYSIS_EMPTY_RESPONSE");
+    emptyResponseError.code = "OPENAI_ANALYSIS_EMPTY_RESPONSE";
+    throw emptyResponseError;
+  }
+
+  let parsedResult = null;
+  try {
+    parsedResult = JSON.parse(outputText);
+  } catch (error) {
+    const invalidJsonError = new Error("OPENAI_ANALYSIS_INVALID_JSON");
+    invalidJsonError.code = "OPENAI_ANALYSIS_INVALID_JSON";
+    invalidJsonError.outputText = outputText;
+    throw invalidJsonError;
+  }
+
+  return {
+    model: OPENAI_AI_DRAFT_ANALYZE_MODEL,
+    imageSource: imageInput ? imageInput.source : "",
+    telegramFileId: imageInput && imageInput.source === "telegram" ? safeString(imageInput.fileId).slice(0, 400) : "",
+    normalized: normalizeOpenAiAiDraftResult(parsedResult),
+    raw: parsedResult
+  };
+}
+
+function buildAiDraftFromAnalysisResult(draft, analysisResult) {
+  const safeDraft = draft && typeof draft === "object" ? draft : null;
+  const safeResult = analysisResult && typeof analysisResult === "object" ? analysisResult : null;
+  if (!safeDraft || !safeResult || !safeResult.normalized) {
+    throw new Error("INVALID_AI_DRAFT_ANALYSIS_RESULT");
+  }
+
+  const normalized = safeResult.normalized;
+  const nextStatus = normalized.confidenceScore >= OPENAI_AI_DRAFT_READY_THRESHOLD
+    ? "ready_to_publish"
+    : "needs_review";
+  const nextAnalysis = normalizeAiDraftAnalysis(
+    Object.assign({}, safeDraft.analysis || {}, {
+      brand: normalized.brand,
+      name: normalized.name,
+      description: normalized.description,
+      volumes: normalized.volumes,
+      gender: normalized.gender,
+      bottleType: normalized.bottleType,
+      notes: normalized.notes,
+      confidenceScore: normalized.confidenceScore,
+      openai: {
+        model: safeString(safeResult.model).slice(0, 120),
+        analyzedAt: normalizeIsoDate(new Date().toISOString()),
+        imageSource: safeString(safeResult.imageSource).slice(0, 40),
+        telegramFileId: safeString(safeResult.telegramFileId).slice(0, 400)
+      }
+    }),
+    safeDraft.analysis
+  );
+
+  return sanitizeIncomingAiDraft(Object.assign({}, safeDraft, {
+    brand: normalized.brand || safeDraft.brand,
+    name: normalized.name || safeDraft.name,
+    description: normalized.description || safeDraft.description,
+    volumes: normalized.volumes.length ? normalized.volumes : safeDraft.volumes,
+    notes: normalized.notes.length ? normalized.notes : safeDraft.notes,
+    analysis: nextAnalysis,
+    confidenceScore: normalized.confidenceScore,
+    status: nextStatus
+  }), safeDraft);
+}
+
 function normalizeAiDraftConfidenceScore(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -2253,7 +2739,18 @@ function normalizeAiDraftAnalysis(value, fallbackValue) {
     return null;
   }
 
-  return normalized;
+  const result = normalized && typeof normalized === "object" && !Array.isArray(normalized)
+    ? cloneData(normalized)
+    : {};
+  const existingImageGeneration = result.imageGeneration && typeof result.imageGeneration === "object" && !Array.isArray(result.imageGeneration)
+    ? cloneData(result.imageGeneration)
+    : {};
+  result.imageGeneration = Object.assign({}, DEFAULT_AI_IMAGE_GENERATION, existingImageGeneration, {
+    background: DEFAULT_AI_IMAGE_GENERATION.background,
+    backgroundHex: DEFAULT_AI_IMAGE_GENERATION.backgroundHex
+  });
+
+  return result;
 }
 
 function getAiDraftSuggestedGender(draft) {
@@ -2491,6 +2988,23 @@ function parseAdminAiDraftIdFromPath(pathname) {
 function parseAdminAiDraftPublishIdFromPath(pathname) {
   const prefix = "/api/admin/ai-drafts/";
   const suffix = "/publish";
+  if (!safeString(pathname).startsWith(prefix) || !safeString(pathname).endsWith(suffix)) {
+    return "";
+  }
+  const rawPart = String(pathname || "").slice(prefix.length, -suffix.length);
+  if (!rawPart || rawPart.includes("/")) {
+    return "";
+  }
+  try {
+    return safeString(decodeURIComponent(rawPart)).slice(0, 120);
+  } catch (error) {
+    return "";
+  }
+}
+
+function parseAdminAiDraftAnalyzeIdFromPath(pathname) {
+  const prefix = "/api/admin/ai-drafts/";
+  const suffix = "/analyze";
   if (!safeString(pathname).startsWith(prefix) || !safeString(pathname).endsWith(suffix)) {
     return "";
   }
@@ -4100,6 +4614,140 @@ async function handleAdminAiDraftPublishApi(req, res, requestUrl) {
   }
 }
 
+async function handleAdminAiDraftAnalyzeApi(req, res, requestUrl) {
+  if (!aiDraftRepository) {
+    sendJson(res, 503, { error: "AI_DRAFTS_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  const draftId = parseAdminAiDraftAnalyzeIdFromPath(requestUrl && requestUrl.pathname);
+  if (!draftId) {
+    sendJson(res, 400, { error: "INVALID_AI_DRAFT_ID" });
+    return;
+  }
+
+  let draftSnapshot = null;
+  try {
+    draftSnapshot = await aiDraftRepository.getById(draftId);
+    if (!draftSnapshot) {
+      sendJson(res, 404, { error: "AI_DRAFT_NOT_FOUND" });
+      return;
+    }
+
+    if (draftSnapshot.status === "published") {
+      sendJson(res, 409, { error: "AI_DRAFT_ALREADY_PUBLISHED" });
+      return;
+    }
+
+    const analysisResult = await requestOpenAiAiDraftAnalysis(draftSnapshot);
+    const result = await runSerializedStoreMutation(async () => {
+      const currentDraft = await aiDraftRepository.getById(draftId);
+      if (!currentDraft) {
+        const notFoundError = new Error("AI_DRAFT_NOT_FOUND");
+        notFoundError.code = "AI_DRAFT_NOT_FOUND";
+        throw notFoundError;
+      }
+
+      if (currentDraft.status === "published") {
+        const alreadyPublishedError = new Error("AI_DRAFT_ALREADY_PUBLISHED");
+        alreadyPublishedError.code = "AI_DRAFT_ALREADY_PUBLISHED";
+        throw alreadyPublishedError;
+      }
+
+      if (safeString(currentDraft.updatedAt) !== safeString(draftSnapshot.updatedAt)) {
+        const conflictError = new Error("AI_DRAFT_VERSION_MISMATCH");
+        conflictError.code = "AI_DRAFT_VERSION_MISMATCH";
+        throw conflictError;
+      }
+
+      const nextDraft = buildAiDraftFromAnalysisResult(currentDraft, analysisResult);
+      await aiDraftRepository.save(nextDraft);
+      return {
+        draft: nextDraft
+      };
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      draft: result.draft
+    });
+  } catch (error) {
+    console.error("AI draft OpenAI analysis failed:", {
+      draftId,
+      message: error && error.message ? error.message : String(error),
+      code: error && error.code ? error.code : "",
+      status: error && error.status ? error.status : 0
+    });
+
+    if (error && error.code === "AI_DRAFT_NOT_FOUND") {
+      sendJson(res, 404, { error: "AI_DRAFT_NOT_FOUND" });
+      return;
+    }
+    if (error && error.code === "AI_DRAFT_ALREADY_PUBLISHED") {
+      sendJson(res, 409, { error: "AI_DRAFT_ALREADY_PUBLISHED" });
+      return;
+    }
+    if (error && error.code === "AI_DRAFT_VERSION_MISMATCH") {
+      sendJson(res, 409, {
+        error: "AI_DRAFT_VERSION_MISMATCH",
+        message: "AI draft was changed in another session. Refresh and retry."
+      });
+      return;
+    }
+    if (error && error.code === "AI_DRAFT_ANALYSIS_INPUT_EMPTY") {
+      sendJson(res, 400, {
+        error: "AI_DRAFT_ANALYSIS_INPUT_EMPTY",
+        message: "Draft must contain rawText or a photo before AI analysis."
+      });
+      return;
+    }
+    if (error && error.code === "OPENAI_API_KEY_MISSING") {
+      sendJson(res, 503, {
+        error: "OPENAI_API_KEY_MISSING",
+        message: "OPENAI_API_KEY is not configured."
+      });
+      return;
+    }
+    if (error && error.code === "TELEGRAM_BOT_TOKEN_MISSING") {
+      sendJson(res, 503, {
+        error: "TELEGRAM_BOT_TOKEN_MISSING",
+        message: "TELEGRAM_BOT_TOKEN is required to analyze Telegram photos."
+      });
+      return;
+    }
+    if (error && (error.code === "OPENAI_ANALYSIS_REQUEST_FAILED" || error.code === "OPENAI_ANALYSIS_EMPTY_RESPONSE" || error.code === "OPENAI_ANALYSIS_INVALID_JSON")) {
+      sendJson(res, 502, {
+        error: error.code,
+        message: "OpenAI analysis request failed."
+      });
+      return;
+    }
+    if (error && (error.code === "TELEGRAM_FILE_LOOKUP_FAILED" || error.code === "TELEGRAM_FILE_PATH_MISSING" || error.code === "AI_DRAFT_IMAGE_DOWNLOAD_FAILED" || error.code === "AI_DRAFT_IMAGE_TOO_LARGE" || error.code === "EXTERNAL_FETCH_TIMEOUT")) {
+      sendJson(res, 502, {
+        error: error.code,
+        message: "Failed to resolve Telegram photo for AI analysis."
+      });
+      return;
+    }
+    if (error && error.message === "INVALID_AI_DRAFT_ANALYSIS_RESULT") {
+      sendJson(res, 500, {
+        error: "INVALID_AI_DRAFT_ANALYSIS_RESULT"
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
 async function handleTelegramWebhookApi(req, res) {
   if (!aiDraftRepository) {
     sendJson(res, 503, { error: "AI_DRAFTS_UNAVAILABLE" });
@@ -5128,6 +5776,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname === "/api/admin/ai-drafts") {
       await handleAdminAiDraftsApi(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname.startsWith("/api/admin/ai-drafts/") && requestUrl.pathname.endsWith("/analyze")) {
+      await handleAdminAiDraftAnalyzeApi(req, res, requestUrl);
       return;
     }
 

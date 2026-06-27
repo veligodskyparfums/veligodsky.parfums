@@ -148,6 +148,7 @@
     elements.aiDraftImagePreview = document.getElementById("aiDraftImagePreview");
     elements.aiDraftAddVolumeBtn = document.getElementById("aiDraftAddVolumeBtn");
     elements.aiDraftVolumesContainer = document.getElementById("aiDraftVolumesContainer");
+    elements.aiDraftAnalyzeBtn = document.getElementById("aiDraftAnalyzeBtn");
     elements.aiDraftFillTestBtn = document.getElementById("aiDraftFillTestBtn");
     elements.aiDraftResetBtn = document.getElementById("aiDraftResetBtn");
     elements.adminAiDraftsMeta = document.getElementById("adminAiDraftsMeta");
@@ -282,6 +283,9 @@
     }
     if (elements.aiDraftFillTestBtn) {
       elements.aiDraftFillTestBtn.addEventListener("click", fillAiDraftWithTestData);
+    }
+    if (elements.aiDraftAnalyzeBtn) {
+      elements.aiDraftAnalyzeBtn.addEventListener("click", analyzeCurrentAiDraft);
     }
     if (elements.aiDraftResetBtn) {
       elements.aiDraftResetBtn.addEventListener("click", resetAiDraftEditor);
@@ -1737,12 +1741,39 @@
   async function saveAiDraft(event) {
     event.preventDefault();
 
+    try {
+      var saveResult = await upsertAiDraftFromForm({
+        ignoreInvalidAnalysis: false
+      });
+      await loadAiDrafts(false);
+      if (saveResult && saveResult.draft) {
+        fillAiDraftForm(saveResult.draft);
+      }
+      showToast(saveResult && saveResult.created ? "AI-черновик создан" : "AI-черновик сохранён");
+    } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      if (String(error && error.message || "").indexOf("INVALID_AI_DRAFT_ANALYSIS_JSON") >= 0) {
+        showToast("Анализ AI должен быть валидным JSON-объектом.", true);
+        return;
+      }
+      showToast("Не удалось сохранить AI-черновик.", true);
+    }
+  }
+
+  async function upsertAiDraftFromForm(options) {
+    var safeOptions = options && typeof options === "object" ? options : {};
     var parsedAnalysis = null;
     try {
       parsedAnalysis = parseAiDraftAnalysisInput();
     } catch (error) {
-      showToast("Анализ AI должен быть валидным JSON-объектом.", true);
-      return;
+      if (!safeOptions.ignoreInvalidAnalysis) {
+        throw error;
+      }
+      parsedAnalysis = null;
     }
 
     var payload = {
@@ -1761,20 +1792,91 @@
       confidenceScore: Number(elements.aiDraftConfidenceInput && elements.aiDraftConfidenceInput.value || 0)
     };
 
+    return store.upsertAdminAiDraft(payload);
+  }
+
+  async function analyzeCurrentAiDraft() {
+    if (!elements.aiDraftForm || typeof store.analyzeAdminAiDraft !== "function") {
+      return;
+    }
+
     try {
-      var result = await store.upsertAdminAiDraft(payload);
-      await loadAiDrafts(false);
-      if (result && result.draft) {
-        fillAiDraftForm(result.draft);
+      var saveResult = await upsertAiDraftFromForm({
+        ignoreInvalidAnalysis: true
+      });
+      var targetDraft = saveResult && saveResult.draft ? saveResult.draft : null;
+      var draftId = String(targetDraft && targetDraft.id || elements.aiDraftIdInput && elements.aiDraftIdInput.value || "").trim();
+      if (!draftId) {
+        showToast("Сначала сохраните черновик с raw text или фото.", true);
+        return;
       }
-      showToast(result && result.created ? "AI-черновик создан" : "AI-черновик сохранён");
+      await analyzeAiDraftById(draftId);
     } catch (error) {
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
         logout();
         showToast("Сессия истекла. Войдите снова.", true);
         return;
       }
-      showToast("Не удалось сохранить AI-черновик.", true);
+      showToast("Не удалось подготовить черновик к AI-анализу.", true);
+    }
+  }
+
+  async function analyzeAiDraftById(draftId) {
+    var safeDraftId = String(draftId || "").trim();
+    if (!safeDraftId || typeof store.analyzeAdminAiDraft !== "function") {
+      return;
+    }
+
+    try {
+      var result = await store.analyzeAdminAiDraft(safeDraftId);
+      await loadAiDrafts(false);
+      if (result && result.draft) {
+        fillAiDraftForm(result.draft);
+      } else {
+        openAiDraft(safeDraftId);
+      }
+      showToast("AI-анализ завершён");
+    } catch (error) {
+      var message = String(error && error.message || "");
+      if (message.indexOf("401") >= 0 || message.indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_NOT_FOUND") >= 0) {
+        showToast("AI-черновик не найден.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_ALREADY_PUBLISHED") >= 0) {
+        showToast("Этот черновик уже опубликован и повторно не анализируется.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_VERSION_MISMATCH") >= 0) {
+        await loadAiDrafts(false);
+        showToast("Черновик был изменён в другой сессии. Обновили список, попробуйте ещё раз.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_ANALYSIS_INPUT_EMPTY") >= 0) {
+        showToast("Для AI-анализа нужен raw text или фото в черновике.", true);
+        return;
+      }
+      if (message.indexOf("OPENAI_API_KEY_MISSING") >= 0) {
+        showToast("На сервере не настроен OPENAI_API_KEY.", true);
+        return;
+      }
+      if (message.indexOf("TELEGRAM_BOT_TOKEN_MISSING") >= 0) {
+        showToast("Для анализа Telegram-фото на сервере нужен TELEGRAM_BOT_TOKEN.", true);
+        return;
+      }
+      if (message.indexOf("OPENAI_ANALYSIS_REQUEST_FAILED") >= 0 || message.indexOf("OPENAI_ANALYSIS_EMPTY_RESPONSE") >= 0 || message.indexOf("OPENAI_ANALYSIS_INVALID_JSON") >= 0) {
+        showToast("OpenAI вернул ошибку анализа. Проверьте ключ и повторите ещё раз.", true);
+        return;
+      }
+      if (message.indexOf("TELEGRAM_FILE_LOOKUP_FAILED") >= 0 || message.indexOf("TELEGRAM_FILE_PATH_MISSING") >= 0 || message.indexOf("AI_DRAFT_IMAGE_DOWNLOAD_FAILED") >= 0 || message.indexOf("AI_DRAFT_IMAGE_TOO_LARGE") >= 0 || message.indexOf("EXTERNAL_FETCH_TIMEOUT") >= 0) {
+        showToast("Не удалось получить фото из Telegram для анализа.", true);
+        return;
+      }
+      showToast("Не удалось выполнить AI-анализ черновика.", true);
     }
   }
 
@@ -1849,6 +1951,7 @@
       + "    <div class=\"admin-product-actions\">"
       + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"open\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">Открыть</button>"
       + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"edit\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">Редактировать</button>"
+      + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"analyze\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">AI анализ</button>"
       + "      <button class=\"btn btn-primary\" type=\"button\" data-ai-draft-action=\"publish\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\"" + (canPublish ? "" : " disabled") + ">" + (isPublished ? "Опубликован" : "Опубликовать") + "</button>"
       + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"delete\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">Удалить</button>"
       + "    </div>"
@@ -1990,6 +2093,11 @@
 
     if (action === "edit") {
       startEditAiDraft(draftId);
+      return;
+    }
+
+    if (action === "analyze") {
+      analyzeAiDraftById(draftId);
       return;
     }
 

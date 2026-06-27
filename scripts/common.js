@@ -1748,6 +1748,51 @@
     };
   }
 
+  async function analyzeAdminAiDraft(draftId) {
+    var safeDraftId = String(draftId || "").trim();
+    if (!safeDraftId) {
+      throw new Error("INVALID_AI_DRAFT_ID");
+    }
+
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_AI_DRAFTS_URL + "/" + encodeURIComponent(safeDraftId) + "/analyze", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_WRITE_TIMEOUT_MS);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (response.status === 404) {
+      throw new Error("AI_DRAFT_NOT_FOUND");
+    }
+    if (response.status === 400 || response.status === 409 || response.status === 502 || response.status === 503) {
+      var analyzePayload = {};
+      try {
+        analyzePayload = await response.json();
+      } catch (error) {
+        analyzePayload = {};
+      }
+      throw new Error(String(analyzePayload && analyzePayload.error || ("HTTP " + response.status)));
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var result = await response.json();
+    return {
+      draft: normalizeAiDraft(result && result.draft)
+    };
+  }
+
   async function createAdminSnapshot(reason) {
     var adminToken = getStoredAdminToken();
     if (!adminToken) {
@@ -2361,6 +2406,7 @@
     upsertAdminAiDraft: upsertAdminAiDraft,
     deleteAdminAiDraft: deleteAdminAiDraft,
     publishAdminAiDraft: publishAdminAiDraft,
+    analyzeAdminAiDraft: analyzeAdminAiDraft,
     getHomepageReviews: getHomepageReviews,
     getPendingHomepageReviews: getPendingHomepageReviews,
     saveHomepageReviews: saveHomepageReviews,
