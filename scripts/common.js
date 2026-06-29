@@ -658,6 +658,85 @@
       }
     }
 
+    var seo = null;
+    if (draft.seo && typeof draft.seo === "object") {
+      seo = {
+        title: repairMojibake(String(draft.seo.title || draft.seo.seoTitle || "").trim()),
+        description: repairMojibake(String(draft.seo.description || draft.seo.seoDescription || "").trim()),
+        slug: String(draft.seo.slug || "").trim()
+      };
+      if (!seo.title && !seo.description && !seo.slug) {
+        seo = null;
+      }
+    }
+
+    var content = null;
+    if (draft.content && typeof draft.content === "object") {
+      content = {
+        shortDescription: repairMojibake(String(draft.content.shortDescription || "").trim()),
+        fullDescription: repairMojibake(String(draft.content.fullDescription || "").trim()),
+        fragranceNotes: Array.isArray(draft.content.fragranceNotes)
+          ? draft.content.fragranceNotes.map(function (item) {
+              return repairMojibake(String(item || "").trim());
+            }).filter(Boolean)
+          : [],
+        season: Array.isArray(draft.content.season)
+          ? draft.content.season.map(function (item) {
+              return repairMojibake(String(item || "").trim());
+            }).filter(Boolean)
+          : [],
+        timeOfDay: Array.isArray(draft.content.timeOfDay)
+          ? draft.content.timeOfDay.map(function (item) {
+              return repairMojibake(String(item || "").trim());
+            }).filter(Boolean)
+          : [],
+        longevity: repairMojibake(String(draft.content.longevity || "").trim()),
+        sillage: repairMojibake(String(draft.content.sillage || "").trim()),
+        suitableFor: repairMojibake(String(draft.content.suitableFor || "").trim()),
+        salesCopy: repairMojibake(String(draft.content.salesCopy || "").trim())
+      };
+    }
+
+    function normalizeAiDraftMediaAsset(asset) {
+      if (!asset || typeof asset !== "object") {
+        return null;
+      }
+      var normalizedAsset = {
+        url: String(asset.url || asset.image || asset.src || "").trim(),
+        alt: repairMojibake(String(asset.alt || "").trim()),
+        prompt: repairMojibake(String(asset.prompt || "").trim()),
+        kind: String(asset.kind || "").trim(),
+        size: String(asset.size || "").trim(),
+        quality: String(asset.quality || "").trim(),
+        model: String(asset.model || "").trim(),
+        generatedAt: String(asset.generatedAt || "").trim()
+      };
+      if (!normalizedAsset.url && !normalizedAsset.alt && !normalizedAsset.prompt) {
+        return null;
+      }
+      return normalizedAsset;
+    }
+
+    var mediaPack = null;
+    if (draft.mediaPack && typeof draft.mediaPack === "object") {
+      mediaPack = {
+        catalogImage: normalizeAiDraftMediaAsset(draft.mediaPack.catalogImage),
+        heroImage: normalizeAiDraftMediaAsset(draft.mediaPack.heroImage),
+        bannerImage: normalizeAiDraftMediaAsset(draft.mediaPack.bannerImage),
+        thumbnail: normalizeAiDraftMediaAsset(draft.mediaPack.thumbnail),
+        gallery: Array.isArray(draft.mediaPack.gallery)
+          ? draft.mediaPack.gallery.map(function (item) {
+              return String(item || "").trim();
+            }).filter(Boolean)
+          : [],
+        generatedAt: String(draft.mediaPack.generatedAt || "").trim(),
+        model: String(draft.mediaPack.model || "").trim()
+      };
+      if (!mediaPack.catalogImage && !mediaPack.heroImage && !mediaPack.bannerImage && !mediaPack.thumbnail && !mediaPack.gallery.length && !mediaPack.generatedAt && !mediaPack.model) {
+        mediaPack = null;
+      }
+    }
+
     return {
       id: String(draft.id || uid("aid")),
       source: source,
@@ -669,6 +748,9 @@
       image: String(draft.image || "").trim(),
       volumes: volumes,
       notes: notes,
+      seo: seo,
+      content: content,
+      mediaPack: mediaPack,
       analysis: analysis,
       confidenceScore: Math.max(0, Math.min(100, Math.round(confidenceScore * 100) / 100)),
       status: status,
@@ -1793,6 +1875,51 @@
     };
   }
 
+  async function createAdminAiDraftCard(draftId) {
+    var safeDraftId = String(draftId || "").trim();
+    if (!safeDraftId) {
+      throw new Error("INVALID_AI_DRAFT_ID");
+    }
+
+    var adminToken = getStoredAdminToken();
+    if (!adminToken) {
+      throw new Error("UNAUTHORIZED");
+    }
+
+    var response = await fetchWithTimeout(API_ADMIN_AI_DRAFTS_URL + "/" + encodeURIComponent(safeDraftId) + "/create-card", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + adminToken
+      }
+    }, REMOTE_WRITE_TIMEOUT_MS * 6);
+
+    if (response.status === 401) {
+      clearStoredAdminToken();
+      throw new Error("UNAUTHORIZED");
+    }
+    if (response.status === 404) {
+      throw new Error("AI_DRAFT_NOT_FOUND");
+    }
+    if (response.status === 400 || response.status === 409 || response.status === 502 || response.status === 503) {
+      var createPayload = {};
+      try {
+        createPayload = await response.json();
+      } catch (error) {
+        createPayload = {};
+      }
+      throw new Error(String(createPayload && createPayload.error || ("HTTP " + response.status)));
+    }
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    var result = await response.json();
+    return {
+      draft: normalizeAiDraft(result && result.draft)
+    };
+  }
+
   async function createAdminSnapshot(reason) {
     var adminToken = getStoredAdminToken();
     if (!adminToken) {
@@ -2407,6 +2534,7 @@
     deleteAdminAiDraft: deleteAdminAiDraft,
     publishAdminAiDraft: publishAdminAiDraft,
     analyzeAdminAiDraft: analyzeAdminAiDraft,
+    createAdminAiDraftCard: createAdminAiDraftCard,
     getHomepageReviews: getHomepageReviews,
     getPendingHomepageReviews: getPendingHomepageReviews,
     saveHomepageReviews: saveHomepageReviews,

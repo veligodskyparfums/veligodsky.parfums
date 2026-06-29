@@ -149,6 +149,7 @@
     elements.aiDraftAddVolumeBtn = document.getElementById("aiDraftAddVolumeBtn");
     elements.aiDraftVolumesContainer = document.getElementById("aiDraftVolumesContainer");
     elements.aiDraftAnalyzeBtn = document.getElementById("aiDraftAnalyzeBtn");
+    elements.aiDraftCreateCardBtn = document.getElementById("aiDraftCreateCardBtn");
     elements.aiDraftFillTestBtn = document.getElementById("aiDraftFillTestBtn");
     elements.aiDraftResetBtn = document.getElementById("aiDraftResetBtn");
     elements.adminAiDraftsMeta = document.getElementById("adminAiDraftsMeta");
@@ -156,6 +157,8 @@
     elements.aiDraftSelectionMeta = document.getElementById("aiDraftSelectionMeta");
     elements.aiDraftLivePreview = document.getElementById("aiDraftLivePreview");
     elements.aiDraftAnalysisPreview = document.getElementById("aiDraftAnalysisPreview");
+    elements.aiDraftProductManagerPreview = document.getElementById("aiDraftProductManagerPreview");
+    elements.aiDraftMediaPreview = document.getElementById("aiDraftMediaPreview");
 
     elements.adminProductsList = document.getElementById("adminProductsList");
     elements.adminCatalogSearchInput = document.getElementById("adminCatalogSearchInput");
@@ -286,6 +289,9 @@
     }
     if (elements.aiDraftAnalyzeBtn) {
       elements.aiDraftAnalyzeBtn.addEventListener("click", analyzeCurrentAiDraft);
+    }
+    if (elements.aiDraftCreateCardBtn) {
+      elements.aiDraftCreateCardBtn.addEventListener("click", createAiCardForCurrentDraft);
     }
     if (elements.aiDraftResetBtn) {
       elements.aiDraftResetBtn.addEventListener("click", resetAiDraftEditor);
@@ -1453,8 +1459,89 @@
     return collectAiDraftVolumes().length > 0;
   }
 
+  function getAiDraftCatalogPreviewImage(draft) {
+    var safeDraft = draft && typeof draft === "object" ? draft : {};
+    if (safeDraft.mediaPack && safeDraft.mediaPack.catalogImage && safeDraft.mediaPack.catalogImage.url) {
+      return String(safeDraft.mediaPack.catalogImage.url || "").trim();
+    }
+    return String(safeDraft.image || "").trim();
+  }
+
+  function buildAiDraftProductManagerPayload(draft) {
+    var safeDraft = draft && typeof draft === "object" ? draft : {};
+    return {
+      seo: safeDraft.seo || null,
+      content: safeDraft.content || null,
+      mediaPack: safeDraft.mediaPack ? {
+        generatedAt: safeDraft.mediaPack.generatedAt || "",
+        model: safeDraft.mediaPack.model || "",
+        catalogImage: safeDraft.mediaPack.catalogImage ? {
+          kind: safeDraft.mediaPack.catalogImage.kind || "catalog-image",
+          alt: safeDraft.mediaPack.catalogImage.alt || "",
+          size: safeDraft.mediaPack.catalogImage.size || "",
+          quality: safeDraft.mediaPack.catalogImage.quality || ""
+        } : null,
+        heroImage: safeDraft.mediaPack.heroImage ? {
+          kind: safeDraft.mediaPack.heroImage.kind || "hero-image",
+          alt: safeDraft.mediaPack.heroImage.alt || "",
+          size: safeDraft.mediaPack.heroImage.size || "",
+          quality: safeDraft.mediaPack.heroImage.quality || ""
+        } : null,
+        bannerImage: safeDraft.mediaPack.bannerImage ? {
+          kind: safeDraft.mediaPack.bannerImage.kind || "banner-image",
+          alt: safeDraft.mediaPack.bannerImage.alt || "",
+          size: safeDraft.mediaPack.bannerImage.size || "",
+          quality: safeDraft.mediaPack.bannerImage.quality || ""
+        } : null,
+        thumbnail: safeDraft.mediaPack.thumbnail ? {
+          kind: safeDraft.mediaPack.thumbnail.kind || "thumbnail",
+          alt: safeDraft.mediaPack.thumbnail.alt || "",
+          size: safeDraft.mediaPack.thumbnail.size || "",
+          quality: safeDraft.mediaPack.thumbnail.quality || ""
+        } : null
+      } : null
+    };
+  }
+
+  function buildAiDraftMediaPreviewMarkup(draft) {
+    var safeDraft = draft && typeof draft === "object" ? draft : {};
+    var mediaPack = safeDraft.mediaPack && typeof safeDraft.mediaPack === "object" ? safeDraft.mediaPack : null;
+    if (!mediaPack) {
+      return "<div class=\"empty-state\">Media pack пока не создан. Сначала выполните AI анализ, затем нажмите «Создать AI карточку».</div>";
+    }
+
+    var items = [
+      { key: "catalogImage", title: "Catalog Image" },
+      { key: "heroImage", title: "Hero Image" },
+      { key: "bannerImage", title: "Banner Image" },
+      { key: "thumbnail", title: "Thumbnail" }
+    ].map(function (entry) {
+      var asset = mediaPack[entry.key];
+      if (!asset || !asset.url) {
+        return "";
+      }
+      return ""
+        + "<article class=\"ai-draft-media-card\">"
+        + "  <div class=\"ai-draft-media-card__image-wrap\">"
+        + "    <img loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(asset.url) + "\" alt=\"" + escapeHtml(asset.alt || entry.title) + "\">"
+        + "  </div>"
+        + "  <div class=\"ai-draft-media-card__body\">"
+        + "    <strong>" + escapeHtml(entry.title) + "</strong>"
+        + "    <span>" + escapeHtml(asset.size || "") + (asset.quality ? " • " + escapeHtml(asset.quality) : "") + "</span>"
+        + "  </div>"
+        + "</article>";
+    }).filter(Boolean);
+
+    if (!items.length) {
+      return "<div class=\"empty-state\">Media pack пока не содержит изображений.</div>";
+    }
+
+    return "<div class=\"ai-draft-media-grid\">" + items.join("") + "</div>";
+  }
+
   function buildAiDraftFromForm(options) {
     var safeOptions = options && typeof options === "object" ? options : {};
+    var baseDraft = safeOptions.baseDraft && typeof safeOptions.baseDraft === "object" ? safeOptions.baseDraft : null;
     var analysis = null;
     var analysisError = "";
 
@@ -1467,7 +1554,7 @@
       analysisError = String(error && error.message || "INVALID_AI_DRAFT_ANALYSIS_JSON");
     }
 
-    return {
+    return Object.assign({}, baseDraft || {}, {
       id: String(elements.aiDraftIdInput && elements.aiDraftIdInput.value || "").trim() || String(safeOptions.id || "").trim(),
       source: String(elements.aiDraftSourceInput && elements.aiDraftSourceInput.value || "manual-test").trim(),
       status: String(elements.aiDraftStatusInput && elements.aiDraftStatusInput.value || "pending").trim(),
@@ -1484,7 +1571,7 @@
       createdAt: String(safeOptions.createdAt || "").trim(),
       updatedAt: String(safeOptions.updatedAt || "").trim(),
       _analysisError: analysisError
-    };
+    });
   }
 
   function buildAiDraftPreviewMarkup(draft) {
@@ -1508,8 +1595,9 @@
           return "<option>" + escapeHtml(formatMlValue(item.ml) + " ml - " + store.formatPrice(item.price)) + "</option>";
         }).join("")
       : "<option>Объёмы ещё не добавлены</option>";
-    var previewImage = safeDraft.image
-      ? "<img loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(safeDraft.image) + "\" alt=\"" + escapeHtml(safeName) + "\">"
+    var previewImageUrl = getAiDraftCatalogPreviewImage(safeDraft);
+    var previewImage = previewImageUrl
+      ? "<img loading=\"lazy\" decoding=\"async\" src=\"" + escapeHtml(previewImageUrl) + "\" alt=\"" + escapeHtml(safeName) + "\">"
       : "<div class=\"ai-draft-preview-image-empty\">Фото черновика</div>";
 
     return ""
@@ -1548,6 +1636,7 @@
     if (hasAiDraftFormContent()) {
       previewDraft = buildAiDraftFromForm({
         ignoreInvalidAnalysis: true,
+        baseDraft: selectedDraft,
         id: selectedDraft && selectedDraft.id,
         createdAt: selectedDraft && selectedDraft.createdAt,
         updatedAt: selectedDraft && selectedDraft.updatedAt
@@ -1563,6 +1652,13 @@
       elements.aiDraftLivePreview.innerHTML = "<div class=\"empty-state\">Предпросмотр появится после выбора черновика или ввода данных.</div>";
       elements.aiDraftAnalysisPreview.textContent = "{}";
       elements.aiDraftAnalysisPreview.classList.remove("ai-draft-analysis-json--error");
+      if (elements.aiDraftProductManagerPreview) {
+        elements.aiDraftProductManagerPreview.textContent = "{}";
+        elements.aiDraftProductManagerPreview.classList.remove("ai-draft-analysis-json--error");
+      }
+      if (elements.aiDraftMediaPreview) {
+        elements.aiDraftMediaPreview.innerHTML = "<div class=\"empty-state\">Media pack пока отсутствует.</div>";
+      }
       return;
     }
 
@@ -1591,6 +1687,13 @@
 
     elements.aiDraftAnalysisPreview.textContent = serializeAiDraftAnalysis(previewDraft.analysis || buildAiDraftFallbackAnalysis(previewDraft));
     elements.aiDraftAnalysisPreview.classList.remove("ai-draft-analysis-json--error");
+    if (elements.aiDraftProductManagerPreview) {
+      elements.aiDraftProductManagerPreview.textContent = serializeAiDraftAnalysis(buildAiDraftProductManagerPayload(previewDraft));
+      elements.aiDraftProductManagerPreview.classList.remove("ai-draft-analysis-json--error");
+    }
+    if (elements.aiDraftMediaPreview) {
+      elements.aiDraftMediaPreview.innerHTML = buildAiDraftMediaPreviewMarkup(previewDraft);
+    }
   }
 
   function fillAiDraftWithTestData() {
@@ -1821,6 +1924,32 @@
     }
   }
 
+  async function createAiCardForCurrentDraft() {
+    if (!elements.aiDraftForm || typeof store.createAdminAiDraftCard !== "function") {
+      return;
+    }
+
+    try {
+      var saveResult = await upsertAiDraftFromForm({
+        ignoreInvalidAnalysis: true
+      });
+      var targetDraft = saveResult && saveResult.draft ? saveResult.draft : null;
+      var draftId = String(targetDraft && targetDraft.id || elements.aiDraftIdInput && elements.aiDraftIdInput.value || "").trim();
+      if (!draftId) {
+        showToast("Сначала сохраните черновик, затем создайте AI карточку.", true);
+        return;
+      }
+      await createAiCardById(draftId);
+    } catch (error) {
+      if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      showToast("Не удалось подготовить черновик к AI Product Manager.", true);
+    }
+  }
+
   async function analyzeAiDraftById(draftId) {
     var safeDraftId = String(draftId || "").trim();
     if (!safeDraftId || typeof store.analyzeAdminAiDraft !== "function") {
@@ -1880,6 +2009,63 @@
     }
   }
 
+  async function createAiCardById(draftId) {
+    var safeDraftId = String(draftId || "").trim();
+    if (!safeDraftId || typeof store.createAdminAiDraftCard !== "function") {
+      return;
+    }
+
+    try {
+      var result = await store.createAdminAiDraftCard(safeDraftId);
+      await loadAiDrafts(false);
+      if (result && result.draft) {
+        fillAiDraftForm(result.draft);
+      } else {
+        openAiDraft(safeDraftId);
+      }
+      showToast("AI карточка создана");
+    } catch (error) {
+      var message = String(error && error.message || "");
+      if (message.indexOf("401") >= 0 || message.indexOf("UNAUTHORIZED") >= 0) {
+        logout();
+        showToast("Сессия истекла. Войдите снова.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_NOT_FOUND") >= 0) {
+        showToast("AI-черновик не найден.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_ALREADY_PUBLISHED") >= 0) {
+        showToast("Этот черновик уже опубликован.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_ANALYSIS_REQUIRED") >= 0) {
+        showToast("Сначала выполните AI анализ черновика.", true);
+        return;
+      }
+      if (message.indexOf("AI_DRAFT_VERSION_MISMATCH") >= 0) {
+        await loadAiDrafts(false);
+        showToast("Черновик был изменён в другой сессии. Обновили список, попробуйте ещё раз.", true);
+        return;
+      }
+      if (message.indexOf("OPENAI_API_KEY_MISSING") >= 0) {
+        showToast("На сервере не настроен OPENAI_API_KEY.", true);
+        return;
+      }
+      if (
+        message.indexOf("OPENAI_AI_CARD_REQUEST_FAILED") >= 0
+        || message.indexOf("OPENAI_AI_CARD_EMPTY_RESPONSE") >= 0
+        || message.indexOf("OPENAI_AI_CARD_INVALID_JSON") >= 0
+        || message.indexOf("OPENAI_AI_IMAGE_REQUEST_FAILED") >= 0
+        || message.indexOf("OPENAI_AI_IMAGE_EMPTY_RESPONSE") >= 0
+      ) {
+        showToast("OpenAI не смог создать AI карточку или media pack. Проверьте ключ и повторите ещё раз.", true);
+        return;
+      }
+      showToast("Не удалось создать AI карточку.", true);
+    }
+  }
+
   async function loadAiDrafts(showErrorToast) {
     if (!elements.adminAiDraftsList || typeof store.fetchAdminAiDrafts !== "function") {
       return;
@@ -1930,6 +2116,7 @@
     var confidenceText = draft && (draft.confidenceScore || draft.confidenceScore === 0)
       ? String(draft.confidenceScore)
       : "0";
+    var hasProductManager = Boolean(draft && (draft.seo || draft.content || draft.mediaPack));
 
     return ""
       + "<article class=\"admin-product-card admin-draft-card" + (draftId === state.aiDraftOpenedId ? " is-selected" : "") + "\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">"
@@ -1952,6 +2139,7 @@
       + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"open\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">Открыть</button>"
       + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"edit\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">Редактировать</button>"
       + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"analyze\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">AI анализ</button>"
+      + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"create-card\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">" + (hasProductManager ? "Обновить AI карточку" : "Создать AI карточку") + "</button>"
       + "      <button class=\"btn btn-primary\" type=\"button\" data-ai-draft-action=\"publish\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\"" + (canPublish ? "" : " disabled") + ">" + (isPublished ? "Опубликован" : "Опубликовать") + "</button>"
       + "      <button class=\"btn btn-ghost\" type=\"button\" data-ai-draft-action=\"delete\" data-ai-draft-id=\"" + escapeHtml(draftId) + "\">Удалить</button>"
       + "    </div>"
@@ -2098,6 +2286,11 @@
 
     if (action === "analyze") {
       analyzeAiDraftById(draftId);
+      return;
+    }
+
+    if (action === "create-card") {
+      createAiCardById(draftId);
       return;
     }
 

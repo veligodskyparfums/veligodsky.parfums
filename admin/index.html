@@ -239,6 +239,7 @@
           <div class="editor-actions">
             <button class="btn btn-primary" type="submit">Сохранить AI-черновик</button>
             <button class="btn btn-ghost" type="button" id="aiDraftAnalyzeBtn">AI анализ</button>
+            <button class="btn btn-ghost" type="button" id="aiDraftCreateCardBtn">Создать AI карточку</button>
             <button class="btn btn-ghost" type="button" id="aiDraftFillTestBtn">Заполнить тестовый черновик</button>
             <button class="btn btn-ghost" type="button" id="aiDraftResetBtn">Очистить форму</button>
           </div>
@@ -255,6 +256,18 @@
             <h3>Анализ AI</h3>
             <div class="admin-catalog-meta">Здесь отображается JSON результата анализа для проверки будущей интеграции Telegram и OpenAI.</div>
             <pre id="aiDraftAnalysisPreview" class="ai-draft-analysis-json">{}</pre>
+          </div>
+
+          <div class="admin-subsection admin-subsection--panel">
+            <h3>AI Product Manager</h3>
+            <div class="admin-catalog-meta">SEO, контент и media pack, которые будут подготовлены для будущего товара без автопубликации.</div>
+            <pre id="aiDraftProductManagerPreview" class="ai-draft-analysis-json">{}</pre>
+          </div>
+
+          <div class="admin-subsection admin-subsection--panel">
+            <h3>Media Pack</h3>
+            <div class="admin-catalog-meta">Сгенерированные изображения для каталога, hero, banner и thumbnail сохраняются только в AI-черновике.</div>
+            <div id="aiDraftMediaPreview" class="ai-draft-media-preview"></div>
           </div>
         </div>
 

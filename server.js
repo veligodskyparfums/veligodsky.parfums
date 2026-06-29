@@ -67,21 +67,32 @@ const MAX_AI_DRAFT_SOURCE_LENGTH = 32;
 const MAX_AI_DRAFT_SOURCE_URL_LENGTH = 1500;
 const MAX_AI_DRAFT_RAW_TEXT_LENGTH = 20000;
 const MAX_AI_DRAFT_TEXT_LENGTH = 6000;
-const MAX_AI_DRAFT_IMAGE_LENGTH = 2 * 1024 * 1024;
+const MAX_AI_DRAFT_IMAGE_LENGTH = 4 * 1024 * 1024;
 const MAX_AI_DRAFT_NOTES = 40;
 const MAX_AI_DRAFT_NOTE_LENGTH = 400;
 const MAX_AI_DRAFT_ANALYSIS_DEPTH = 5;
 const MAX_AI_DRAFT_ANALYSIS_KEYS = 80;
 const MAX_AI_DRAFT_ANALYSIS_STRING_LENGTH = 800;
 const MAX_AI_DRAFT_ANALYSIS_JSON_LENGTH = 20000;
+const MAX_AI_DRAFT_SLUG_LENGTH = 180;
+const MAX_AI_DRAFT_SEO_TITLE_LENGTH = 220;
+const MAX_AI_DRAFT_SEO_DESCRIPTION_LENGTH = 320;
+const MAX_AI_DRAFT_CONTENT_TEXT_LENGTH = 12000;
+const MAX_AI_DRAFT_MEDIA_IMAGE_LENGTH = 4 * 1024 * 1024;
+const MAX_AI_DRAFT_MEDIA_TEXT_LENGTH = 2000;
+const MAX_AI_DRAFT_MEDIA_LIST_LENGTH = 12;
 const TELEGRAM_WEBHOOK_PATH = "/api/telegram/webhook";
 const TELEGRAM_WEBHOOK_SECRET_HEADER = "x-telegram-bot-api-secret-token";
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
+const OPENAI_IMAGES_API_URL = "https://api.openai.com/v1/images/generations";
 const EXTERNAL_FETCH_TIMEOUT_MS = Math.max(5 * 1000, Number(process.env.EXTERNAL_FETCH_TIMEOUT_MS || 25 * 1000));
 const MAX_TELEGRAM_ANALYSIS_IMAGE_BYTES = Math.max(256 * 1024, Number(process.env.MAX_TELEGRAM_ANALYSIS_IMAGE_BYTES || 6 * 1024 * 1024));
 const OPENAI_AI_DRAFT_ANALYZE_MODEL = safeString(process.env.OPENAI_AI_DRAFT_ANALYZE_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini").slice(0, 120) || "gpt-4.1-mini";
+const OPENAI_AI_DRAFT_CARD_MODEL = safeString(process.env.OPENAI_AI_DRAFT_CARD_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini").slice(0, 120) || "gpt-4.1-mini";
+const OPENAI_AI_DRAFT_IMAGE_MODEL = safeString(process.env.OPENAI_AI_DRAFT_IMAGE_MODEL || process.env.OPENAI_IMAGE_MODEL || "gpt-image-1").slice(0, 120) || "gpt-image-1";
 const OPENAI_AI_DRAFT_READY_THRESHOLD = Math.max(0, Math.min(1, Number(process.env.OPENAI_AI_DRAFT_READY_THRESHOLD || 0.8) || 0.8));
+const OPENAI_AI_DRAFT_IMAGE_TIMEOUT_MS = Math.max(20 * 1000, Number(process.env.OPENAI_AI_DRAFT_IMAGE_TIMEOUT_MS || 90 * 1000));
 const DEFAULT_AI_IMAGE_GENERATION = Object.freeze({
   background: "black",
   backgroundHex: "#050505",
@@ -798,6 +809,31 @@ function clearFailedAdminLogins(clientIp) {
 
 function safeString(value) {
   return String(value || "").trim();
+}
+
+function transliterateCyrillicToLatin(value) {
+  const map = {
+    а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y",
+    к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f",
+    х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya"
+  };
+
+  return safeString(value)
+    .toLowerCase()
+    .split("")
+    .map((character) => {
+      return Object.prototype.hasOwnProperty.call(map, character) ? map[character] : character;
+    })
+    .join("");
+}
+
+function slugifyText(value) {
+  return transliterateCyrillicToLatin(value)
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .slice(0, MAX_AI_DRAFT_SLUG_LENGTH);
 }
 
 function timingSafeEqualStrings(left, right) {
@@ -2184,13 +2220,16 @@ function getOpenAiApiKey() {
 }
 
 async function fetchExternalResource(url, options) {
+  const safeOptions = options && typeof options === "object" ? Object.assign({}, options) : {};
+  const timeoutMs = Math.max(1000, Number(safeOptions.timeoutMs || EXTERNAL_FETCH_TIMEOUT_MS) || EXTERNAL_FETCH_TIMEOUT_MS);
+  delete safeOptions.timeoutMs;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort();
-  }, EXTERNAL_FETCH_TIMEOUT_MS);
+  }, timeoutMs);
 
   try {
-    return await fetch(url, Object.assign({}, options || {}, {
+    return await fetch(url, Object.assign({}, safeOptions, {
       signal: controller.signal
     }));
   } catch (error) {
@@ -2650,6 +2689,562 @@ function buildAiDraftFromAnalysisResult(draft, analysisResult) {
   }), safeDraft);
 }
 
+function normalizeAiDraftKeywordList(value, maxItems, maxItemLength) {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/\r?\n|,/)
+      : [];
+
+  return source
+    .map((item) => safeString(item).slice(0, maxItemLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function normalizeAiDraftSeo(value, fallbackValue) {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : fallbackValue && typeof fallbackValue === "object" && !Array.isArray(fallbackValue)
+      ? fallbackValue
+      : null;
+  if (!source) {
+    return null;
+  }
+
+  const title = safeString(source.title || source.seoTitle).slice(0, MAX_AI_DRAFT_SEO_TITLE_LENGTH);
+  const description = safeString(source.description || source.seoDescription).slice(0, MAX_AI_DRAFT_SEO_DESCRIPTION_LENGTH);
+  const rawSlug = safeString(source.slug).slice(0, MAX_AI_DRAFT_SLUG_LENGTH);
+  const slug = rawSlug ? slugifyText(rawSlug) : "";
+
+  if (!title && !description && !slug) {
+    return null;
+  }
+
+  return {
+    title,
+    description,
+    slug
+  };
+}
+
+function normalizeAiDraftContent(value, fallbackValue) {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : fallbackValue && typeof fallbackValue === "object" && !Array.isArray(fallbackValue)
+      ? fallbackValue
+      : null;
+  if (!source) {
+    return null;
+  }
+
+  const content = {
+    shortDescription: safeString(source.shortDescription).slice(0, MAX_AI_DRAFT_TEXT_LENGTH),
+    fullDescription: safeString(source.fullDescription).slice(0, MAX_AI_DRAFT_CONTENT_TEXT_LENGTH),
+    fragranceNotes: normalizeAiDraftKeywordList(source.fragranceNotes || source.notes, 20, 120),
+    season: normalizeAiDraftKeywordList(source.season, 8, 80),
+    timeOfDay: normalizeAiDraftKeywordList(source.timeOfDay, 8, 80),
+    longevity: safeString(source.longevity).slice(0, 120),
+    sillage: safeString(source.sillage).slice(0, 120),
+    suitableFor: safeString(source.suitableFor || source.targetAudience || source.whoFits).slice(0, 600),
+    salesCopy: safeString(source.salesCopy || source.sellingText).slice(0, MAX_AI_DRAFT_CONTENT_TEXT_LENGTH)
+  };
+
+  if (
+    !content.shortDescription
+    && !content.fullDescription
+    && !content.fragranceNotes.length
+    && !content.season.length
+    && !content.timeOfDay.length
+    && !content.longevity
+    && !content.sillage
+    && !content.suitableFor
+    && !content.salesCopy
+  ) {
+    return null;
+  }
+
+  return content;
+}
+
+function normalizeAiDraftMediaAsset(value, fallbackValue) {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : fallbackValue && typeof fallbackValue === "object" && !Array.isArray(fallbackValue)
+      ? fallbackValue
+      : null;
+  if (!source) {
+    return null;
+  }
+
+  const url = safeString(source.url || source.image || source.src).slice(0, MAX_AI_DRAFT_MEDIA_IMAGE_LENGTH);
+  const alt = safeString(source.alt).slice(0, MAX_AI_DRAFT_MEDIA_TEXT_LENGTH);
+  const prompt = safeString(source.prompt).slice(0, MAX_AI_DRAFT_MEDIA_TEXT_LENGTH);
+  const kind = safeString(source.kind).slice(0, 60);
+  const size = safeString(source.size).slice(0, 40);
+  const quality = safeString(source.quality).slice(0, 40);
+  const model = safeString(source.model).slice(0, 120);
+  const generatedAt = source.generatedAt ? normalizeIsoDate(source.generatedAt) : "";
+
+  if (!url && !alt && !prompt) {
+    return null;
+  }
+
+  return {
+    url,
+    alt,
+    prompt,
+    kind,
+    size,
+    quality,
+    model,
+    generatedAt
+  };
+}
+
+function normalizeAiDraftMediaPack(value, fallbackValue) {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : fallbackValue && typeof fallbackValue === "object" && !Array.isArray(fallbackValue)
+      ? fallbackValue
+      : null;
+  if (!source) {
+    return null;
+  }
+
+  const mediaPack = {
+    catalogImage: normalizeAiDraftMediaAsset(source.catalogImage, null),
+    heroImage: normalizeAiDraftMediaAsset(source.heroImage, null),
+    bannerImage: normalizeAiDraftMediaAsset(source.bannerImage, null),
+    thumbnail: normalizeAiDraftMediaAsset(source.thumbnail, null),
+    gallery: normalizeAiDraftKeywordList(source.gallery, MAX_AI_DRAFT_MEDIA_LIST_LENGTH, MAX_AI_DRAFT_MEDIA_IMAGE_LENGTH),
+    generatedAt: source.generatedAt ? normalizeIsoDate(source.generatedAt) : "",
+    model: safeString(source.model).slice(0, 120)
+  };
+
+  if (
+    !mediaPack.catalogImage
+    && !mediaPack.heroImage
+    && !mediaPack.bannerImage
+    && !mediaPack.thumbnail
+    && !mediaPack.gallery.length
+    && !mediaPack.generatedAt
+    && !mediaPack.model
+  ) {
+    return null;
+  }
+
+  return mediaPack;
+}
+
+function buildOpenAiAiDraftCardSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "seoTitle",
+      "seoDescription",
+      "slug",
+      "shortDescription",
+      "fullDescription",
+      "fragranceNotes",
+      "season",
+      "timeOfDay",
+      "longevity",
+      "sillage",
+      "suitableFor",
+      "salesCopy"
+    ],
+    properties: {
+      seoTitle: { type: "string" },
+      seoDescription: { type: "string" },
+      slug: { type: "string" },
+      shortDescription: { type: "string" },
+      fullDescription: { type: "string" },
+      fragranceNotes: {
+        type: "array",
+        items: { type: "string" },
+        maxItems: 20
+      },
+      season: {
+        type: "array",
+        items: { type: "string" },
+        maxItems: 8
+      },
+      timeOfDay: {
+        type: "array",
+        items: { type: "string" },
+        maxItems: 8
+      },
+      longevity: { type: "string" },
+      sillage: { type: "string" },
+      suitableFor: { type: "string" },
+      salesCopy: { type: "string" }
+    }
+  };
+}
+
+function buildOpenAiAiDraftCardPrompt(draft) {
+  const safeDraft = draft && typeof draft === "object" ? draft : {};
+  const analysis = safeDraft.analysis && typeof safeDraft.analysis === "object" ? safeDraft.analysis : {};
+  const promptParts = [
+    "Ты создаешь премиальную AI-карточку для товара интернет-бутика оригинальной парфюмерии Veligodsky Parfums.",
+    "Верни только JSON по заданной схеме. Без markdown, без комментариев.",
+    "Пиши на русском языке.",
+    "Используй raw text и уже выполненный анализ. Не выдумывай несоответствующие бренду факты, но можно аккуратно дополнять коммерчески уместными формулировками.",
+    "Slug верни латиницей в kebab-case.",
+    "SEO title до 70 символов, SEO description до 160 символов.",
+    "shortDescription - короткое описание для карточки товара.",
+    "fullDescription - более полное продающее описание.",
+    "fragranceNotes - только ароматические ноты, массив строк.",
+    "season - массив подходящих сезонов.",
+    "timeOfDay - массив подходящего времени суток/ситуаций.",
+    "longevity и sillage - короткие емкие характеристики.",
+    "suitableFor - кому подойдет аромат.",
+    "salesCopy - краткий премиальный продающий текст.",
+    "",
+    "Текущий черновик:",
+    JSON.stringify({
+      brand: safeDraft.brand,
+      name: safeDraft.name,
+      description: safeDraft.description,
+      rawText: safeString(safeDraft.rawText).slice(0, 8000),
+      sourceUrl: safeDraft.sourceUrl,
+      volumes: Array.isArray(safeDraft.volumes) ? safeDraft.volumes : [],
+      analysis: analysis
+    }, null, 2)
+  ];
+
+  return promptParts.join("\n");
+}
+
+function normalizeOpenAiAiDraftCardResult(rawResult, draft) {
+  const safeResult = rawResult && typeof rawResult === "object" && !Array.isArray(rawResult) ? rawResult : {};
+  const safeDraft = draft && typeof draft === "object" ? draft : {};
+  const fallbackName = safeString(safeDraft.name);
+  const fallbackBrand = safeString(safeDraft.brand);
+  const fallbackSlug = slugifyText([fallbackBrand, fallbackName].filter(Boolean).join(" "));
+
+  return {
+    seo: normalizeAiDraftSeo({
+      title: safeResult.seoTitle,
+      description: safeResult.seoDescription,
+      slug: safeResult.slug || fallbackSlug
+    }, {
+      title: [fallbackBrand, fallbackName].filter(Boolean).join(" "),
+      description: safeString(safeDraft.description),
+      slug: fallbackSlug
+    }),
+    content: normalizeAiDraftContent({
+      shortDescription: safeResult.shortDescription,
+      fullDescription: safeResult.fullDescription,
+      fragranceNotes: safeResult.fragranceNotes,
+      season: safeResult.season,
+      timeOfDay: safeResult.timeOfDay,
+      longevity: safeResult.longevity,
+      sillage: safeResult.sillage,
+      suitableFor: safeResult.suitableFor,
+      salesCopy: safeResult.salesCopy
+    }, null)
+  };
+}
+
+async function requestOpenAiAiDraftProductCard(draft) {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    const missingKeyError = new Error("OPENAI_API_KEY_MISSING");
+    missingKeyError.code = "OPENAI_API_KEY_MISSING";
+    throw missingKeyError;
+  }
+
+  const safeDraft = draft && typeof draft === "object" ? draft : null;
+  if (!safeDraft) {
+    const invalidDraftError = new Error("AI_DRAFT_NOT_FOUND");
+    invalidDraftError.code = "AI_DRAFT_NOT_FOUND";
+    throw invalidDraftError;
+  }
+
+  const prompt = buildOpenAiAiDraftCardPrompt(safeDraft);
+  const response = await fetchExternalResource(OPENAI_RESPONSES_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "Authorization": "Bearer " + apiKey
+    },
+    body: JSON.stringify({
+      model: OPENAI_AI_DRAFT_CARD_MODEL,
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: prompt
+            }
+          ]
+        }
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "ai_draft_product_card",
+          strict: true,
+          schema: buildOpenAiAiDraftCardSchema()
+        }
+      }
+    })
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const apiError = new Error("OPENAI_AI_CARD_REQUEST_FAILED");
+    apiError.code = "OPENAI_AI_CARD_REQUEST_FAILED";
+    apiError.status = response.status;
+    apiError.payload = payload;
+    throw apiError;
+  }
+
+  const outputText = extractOpenAiOutputText(payload);
+  if (!outputText) {
+    const emptyResponseError = new Error("OPENAI_AI_CARD_EMPTY_RESPONSE");
+    emptyResponseError.code = "OPENAI_AI_CARD_EMPTY_RESPONSE";
+    throw emptyResponseError;
+  }
+
+  let parsedResult = null;
+  try {
+    parsedResult = JSON.parse(outputText);
+  } catch (error) {
+    const invalidJsonError = new Error("OPENAI_AI_CARD_INVALID_JSON");
+    invalidJsonError.code = "OPENAI_AI_CARD_INVALID_JSON";
+    invalidJsonError.outputText = outputText;
+    throw invalidJsonError;
+  }
+
+  return {
+    model: OPENAI_AI_DRAFT_CARD_MODEL,
+    normalized: normalizeOpenAiAiDraftCardResult(parsedResult, safeDraft),
+    raw: parsedResult
+  };
+}
+
+function buildAiDraftImageGenerationPrompts(draft, cardData) {
+  const safeDraft = draft && typeof draft === "object" ? draft : {};
+  const safeCardData = cardData && typeof cardData === "object" ? cardData : {};
+  const content = safeCardData.content && typeof safeCardData.content === "object" ? safeCardData.content : {};
+  const notesLine = Array.isArray(content.fragranceNotes) && content.fragranceNotes.length
+    ? content.fragranceNotes.join(", ")
+    : "luxury perfume";
+  const scentMood = safeString(content.salesCopy || content.fullDescription || safeDraft.description).slice(0, 800);
+  const brandName = [safeDraft.brand, safeDraft.name].filter(Boolean).join(" ");
+  const bottleTypeLabel = getAiDraftSuggestedBottleType(safeDraft) === "tester"
+    ? "tester bottle"
+    : getAiDraftSuggestedBottleType(safeDraft) === "decant"
+      ? "decant bottle"
+      : "full-size perfume bottle";
+  const shared = [
+    "Luxury perfume visual for Veligodsky Parfums.",
+    "Fragrance: " + (brandName || "premium fragrance") + ".",
+    "Visual mood: " + (scentMood || "premium black luxury") + ".",
+    "Notes and atmosphere: " + notesLine + ".",
+    "Use a deep black background #050505.",
+    "Avoid white backgrounds.",
+    "High realism, premium materials, soft studio lighting, no cheap plastic look, no collage, no mockup frame."
+  ].join(" ");
+
+  return {
+    catalogImage: {
+      kind: "catalog-image",
+      size: "1024x1024",
+      quality: "low",
+      alt: (brandName || "Perfume") + " — catalog image",
+      prompt: [
+        shared,
+        "Create a minimal hi-tech catalog product image.",
+        "Centered " + bottleTypeLabel + ".",
+        "Black luxury background, subtle reflections, gentle white studio light, realistic glass and metal, clean e-commerce composition.",
+        "No text overlay, no extra objects, no hands."
+      ].join(" ")
+    },
+    heroImage: {
+      kind: "hero-image",
+      size: "1024x1024",
+      quality: "medium",
+      alt: (brandName || "Perfume") + " — hero image",
+      prompt: [
+        shared,
+        "Create a premium artistic hero composition.",
+        "Use liquid metal, black glass, obsidian stone and smoke around the fragrance bottle.",
+        "Look like a luxury perfume campaign and contemporary art installation.",
+        "Minimal UI space, cinematic contrast, dramatic but refined."
+      ].join(" ")
+    },
+    bannerImage: {
+      kind: "banner-image",
+      size: "1024x1024",
+      quality: "medium",
+      alt: (brandName || "Perfume") + " — banner image",
+      prompt: [
+        shared,
+        "Create a dark premium advertising banner image for the fragrance.",
+        "Atmosphere must reflect the perfume character.",
+        "Wide luxurious composition, black gradients, metallic highlights, premium brand campaign aesthetic."
+      ].join(" ")
+    },
+    thumbnail: {
+      kind: "thumbnail",
+      size: "1024x1024",
+      quality: "low",
+      alt: (brandName || "Perfume") + " — thumbnail",
+      prompt: [
+        shared,
+        "Create a compact thumbnail-style product visual.",
+        "Centered bottle, dark luxury background, crisp silhouette, minimal details, premium catalog consistency."
+      ].join(" ")
+    }
+  };
+}
+
+async function requestOpenAiGeneratedImageDataUrl(prompt, options) {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    const missingKeyError = new Error("OPENAI_API_KEY_MISSING");
+    missingKeyError.code = "OPENAI_API_KEY_MISSING";
+    throw missingKeyError;
+  }
+
+  const safeOptions = options && typeof options === "object" ? options : {};
+  const response = await fetchExternalResource(OPENAI_IMAGES_API_URL, {
+    method: "POST",
+    timeoutMs: OPENAI_AI_DRAFT_IMAGE_TIMEOUT_MS,
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "Authorization": "Bearer " + apiKey
+    },
+    body: JSON.stringify({
+      model: OPENAI_AI_DRAFT_IMAGE_MODEL,
+      prompt: safeString(prompt).slice(0, 7000),
+      size: safeString(safeOptions.size || "1024x1024").slice(0, 40) || "1024x1024",
+      quality: safeString(safeOptions.quality || "low").slice(0, 40) || "low"
+    })
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const apiError = new Error("OPENAI_AI_IMAGE_REQUEST_FAILED");
+    apiError.code = "OPENAI_AI_IMAGE_REQUEST_FAILED";
+    apiError.status = response.status;
+    apiError.payload = payload;
+    throw apiError;
+  }
+
+  const item = Array.isArray(payload && payload.data) ? payload.data[0] : null;
+  const base64Body = safeString(item && item.b64_json);
+  if (!base64Body) {
+    const emptyImageError = new Error("OPENAI_AI_IMAGE_EMPTY_RESPONSE");
+    emptyImageError.code = "OPENAI_AI_IMAGE_EMPTY_RESPONSE";
+    throw emptyImageError;
+  }
+
+  return "data:image/png;base64," + base64Body;
+}
+
+async function requestOpenAiAiDraftMediaPack(draft, cardData) {
+  const prompts = buildAiDraftImageGenerationPrompts(draft, cardData);
+  const generatedAt = normalizeIsoDate(new Date().toISOString());
+  const entries = Object.entries(prompts);
+  const mediaPack = {
+    catalogImage: null,
+    heroImage: null,
+    bannerImage: null,
+    thumbnail: null,
+    generatedAt,
+    model: OPENAI_AI_DRAFT_IMAGE_MODEL,
+    gallery: []
+  };
+
+  for (const [key, config] of entries) {
+    const url = await requestOpenAiGeneratedImageDataUrl(config.prompt, {
+      size: config.size,
+      quality: config.quality
+    });
+    mediaPack[key] = normalizeAiDraftMediaAsset({
+      url,
+      alt: config.alt,
+      prompt: config.prompt,
+      kind: config.kind,
+      size: config.size,
+      quality: config.quality,
+      model: OPENAI_AI_DRAFT_IMAGE_MODEL,
+      generatedAt
+    }, null);
+    if (mediaPack[key] && mediaPack[key].url) {
+      mediaPack.gallery.push(mediaPack[key].url);
+    }
+  }
+
+  return normalizeAiDraftMediaPack(mediaPack, null);
+}
+
+function buildAiDraftFromProductCardResult(draft, cardData, mediaPack) {
+  const safeDraft = draft && typeof draft === "object" ? draft : null;
+  const safeCardData = cardData && typeof cardData === "object" ? cardData : null;
+  if (!safeDraft || !safeCardData) {
+    throw new Error("INVALID_AI_DRAFT_PRODUCT_CARD_RESULT");
+  }
+
+  const normalizedSeo = normalizeAiDraftSeo(safeCardData.seo, safeDraft.seo);
+  const normalizedContent = normalizeAiDraftContent(safeCardData.content, safeDraft.content);
+  const normalizedMediaPack = normalizeAiDraftMediaPack(mediaPack, safeDraft.mediaPack);
+  const catalogImage = normalizedMediaPack && normalizedMediaPack.catalogImage && normalizedMediaPack.catalogImage.url
+    ? normalizedMediaPack.catalogImage.url
+    : safeDraft.image;
+  const nextAnalysis = normalizeAiDraftAnalysis(
+    Object.assign({}, safeDraft.analysis || {}, {
+      productManager: {
+        model: safeString(safeCardData.model).slice(0, 120),
+        imageModel: normalizedMediaPack ? safeString(normalizedMediaPack.model).slice(0, 120) : "",
+        generatedAt: normalizeIsoDate(new Date().toISOString()),
+        seoReady: Boolean(normalizedSeo),
+        contentReady: Boolean(normalizedContent),
+        mediaReady: Boolean(
+          normalizedMediaPack
+          && normalizedMediaPack.catalogImage
+          && normalizedMediaPack.heroImage
+          && normalizedMediaPack.bannerImage
+          && normalizedMediaPack.thumbnail
+        )
+      }
+    }),
+    safeDraft.analysis
+  );
+
+  return sanitizeIncomingAiDraft(Object.assign({}, safeDraft, {
+    image: catalogImage,
+    description: normalizedContent && normalizedContent.shortDescription
+      ? normalizedContent.shortDescription
+      : safeDraft.description,
+    seo: normalizedSeo,
+    content: normalizedContent,
+    mediaPack: normalizedMediaPack,
+    analysis: nextAnalysis
+  }), safeDraft);
+}
+
 function normalizeAiDraftConfidenceScore(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -2832,6 +3427,18 @@ function sanitizeIncomingAiDraft(rawDraft, existingDraft) {
     image: safeString(rawDraft.image !== undefined ? rawDraft.image : (safeExisting && safeExisting.image)).slice(0, MAX_AI_DRAFT_IMAGE_LENGTH),
     volumes,
     notes: normalizeAiDraftNotes(rawDraft.notes !== undefined ? rawDraft.notes : (safeExisting && safeExisting.notes)),
+    seo: normalizeAiDraftSeo(
+      rawDraft.seo,
+      safeExisting && safeExisting.seo
+    ),
+    content: normalizeAiDraftContent(
+      rawDraft.content,
+      safeExisting && safeExisting.content
+    ),
+    mediaPack: normalizeAiDraftMediaPack(
+      rawDraft.mediaPack,
+      safeExisting && safeExisting.mediaPack
+    ),
     analysis: normalizeAiDraftAnalysis(
       rawDraft.analysis,
       safeExisting && safeExisting.analysis
@@ -3005,6 +3612,23 @@ function parseAdminAiDraftPublishIdFromPath(pathname) {
 function parseAdminAiDraftAnalyzeIdFromPath(pathname) {
   const prefix = "/api/admin/ai-drafts/";
   const suffix = "/analyze";
+  if (!safeString(pathname).startsWith(prefix) || !safeString(pathname).endsWith(suffix)) {
+    return "";
+  }
+  const rawPart = String(pathname || "").slice(prefix.length, -suffix.length);
+  if (!rawPart || rawPart.includes("/")) {
+    return "";
+  }
+  try {
+    return safeString(decodeURIComponent(rawPart)).slice(0, 120);
+  } catch (error) {
+    return "";
+  }
+}
+
+function parseAdminAiDraftCreateCardIdFromPath(pathname) {
+  const prefix = "/api/admin/ai-drafts/";
+  const suffix = "/create-card";
   if (!safeString(pathname).startsWith(prefix) || !safeString(pathname).endsWith(suffix)) {
     return "";
   }
@@ -4748,6 +5372,142 @@ async function handleAdminAiDraftAnalyzeApi(req, res, requestUrl) {
   }
 }
 
+async function handleAdminAiDraftCreateCardApi(req, res, requestUrl) {
+  if (!aiDraftRepository) {
+    sendJson(res, 503, { error: "AI_DRAFTS_UNAVAILABLE" });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendText(res, 405, "Method Not Allowed");
+    return;
+  }
+
+  if (!ensureAdminAuthorized(req, res)) {
+    return;
+  }
+
+  const draftId = parseAdminAiDraftCreateCardIdFromPath(requestUrl && requestUrl.pathname);
+  if (!draftId) {
+    sendJson(res, 400, { error: "INVALID_AI_DRAFT_ID" });
+    return;
+  }
+
+  let draftSnapshot = null;
+  try {
+    draftSnapshot = await aiDraftRepository.getById(draftId);
+    if (!draftSnapshot) {
+      sendJson(res, 404, { error: "AI_DRAFT_NOT_FOUND" });
+      return;
+    }
+
+    if (draftSnapshot.status === "published") {
+      sendJson(res, 409, { error: "AI_DRAFT_ALREADY_PUBLISHED" });
+      return;
+    }
+
+    const analysis = draftSnapshot.analysis && typeof draftSnapshot.analysis === "object" ? draftSnapshot.analysis : null;
+    if (!analysis || (!analysis.brand && !analysis.name && !analysis.description && !analysis.productManager)) {
+      sendJson(res, 409, {
+        error: "AI_DRAFT_ANALYSIS_REQUIRED",
+        message: "Run AI analysis before generating the AI product card."
+      });
+      return;
+    }
+
+    const productCardData = await requestOpenAiAiDraftProductCard(draftSnapshot);
+    const mediaPack = await requestOpenAiAiDraftMediaPack(draftSnapshot, productCardData.normalized);
+
+    const result = await runSerializedStoreMutation(async () => {
+      const currentDraft = await aiDraftRepository.getById(draftId);
+      if (!currentDraft) {
+        const notFoundError = new Error("AI_DRAFT_NOT_FOUND");
+        notFoundError.code = "AI_DRAFT_NOT_FOUND";
+        throw notFoundError;
+      }
+
+      if (currentDraft.status === "published") {
+        const alreadyPublishedError = new Error("AI_DRAFT_ALREADY_PUBLISHED");
+        alreadyPublishedError.code = "AI_DRAFT_ALREADY_PUBLISHED";
+        throw alreadyPublishedError;
+      }
+
+      if (safeString(currentDraft.updatedAt) !== safeString(draftSnapshot.updatedAt)) {
+        const conflictError = new Error("AI_DRAFT_VERSION_MISMATCH");
+        conflictError.code = "AI_DRAFT_VERSION_MISMATCH";
+        throw conflictError;
+      }
+
+      const nextDraft = buildAiDraftFromProductCardResult(
+        currentDraft,
+        Object.assign({}, productCardData.normalized, {
+          model: productCardData.model
+        }),
+        mediaPack
+      );
+      await aiDraftRepository.save(nextDraft);
+      return {
+        draft: nextDraft
+      };
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      draft: result.draft
+    });
+  } catch (error) {
+    console.error("AI draft product manager failed:", {
+      draftId,
+      message: error && error.message ? error.message : String(error),
+      code: error && error.code ? error.code : "",
+      status: error && error.status ? error.status : 0
+    });
+
+    if (error && error.code === "AI_DRAFT_NOT_FOUND") {
+      sendJson(res, 404, { error: "AI_DRAFT_NOT_FOUND" });
+      return;
+    }
+    if (error && error.code === "AI_DRAFT_ALREADY_PUBLISHED") {
+      sendJson(res, 409, { error: "AI_DRAFT_ALREADY_PUBLISHED" });
+      return;
+    }
+    if (error && error.code === "AI_DRAFT_VERSION_MISMATCH") {
+      sendJson(res, 409, {
+        error: "AI_DRAFT_VERSION_MISMATCH",
+        message: "AI draft was changed in another session. Refresh and retry."
+      });
+      return;
+    }
+    if (error && error.code === "OPENAI_API_KEY_MISSING") {
+      sendJson(res, 503, {
+        error: "OPENAI_API_KEY_MISSING",
+        message: "OPENAI_API_KEY is not configured."
+      });
+      return;
+    }
+    if (error && (
+      error.code === "OPENAI_AI_CARD_REQUEST_FAILED"
+      || error.code === "OPENAI_AI_CARD_EMPTY_RESPONSE"
+      || error.code === "OPENAI_AI_CARD_INVALID_JSON"
+      || error.code === "OPENAI_AI_IMAGE_REQUEST_FAILED"
+      || error.code === "OPENAI_AI_IMAGE_EMPTY_RESPONSE"
+    )) {
+      sendJson(res, 502, {
+        error: error.code,
+        message: "OpenAI AI Product Manager request failed."
+      });
+      return;
+    }
+    if (error && error.message === "INVALID_AI_DRAFT_PRODUCT_CARD_RESULT") {
+      sendJson(res, 500, {
+        error: "INVALID_AI_DRAFT_PRODUCT_CARD_RESULT"
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
 async function handleTelegramWebhookApi(req, res) {
   if (!aiDraftRepository) {
     sendJson(res, 503, { error: "AI_DRAFTS_UNAVAILABLE" });
@@ -5781,6 +6541,11 @@ async function requestHandler(req, res) {
 
     if (requestUrl.pathname.startsWith("/api/admin/ai-drafts/") && requestUrl.pathname.endsWith("/analyze")) {
       await handleAdminAiDraftAnalyzeApi(req, res, requestUrl);
+      return;
+    }
+
+    if (requestUrl.pathname.startsWith("/api/admin/ai-drafts/") && requestUrl.pathname.endsWith("/create-card")) {
+      await handleAdminAiDraftCreateCardApi(req, res, requestUrl);
       return;
     }
 
