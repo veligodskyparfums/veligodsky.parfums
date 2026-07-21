@@ -93,6 +93,7 @@ const OPENAI_AI_DRAFT_CARD_MODEL = safeString(process.env.OPENAI_AI_DRAFT_CARD_M
 const OPENAI_AI_DRAFT_IMAGE_MODEL = safeString(process.env.OPENAI_AI_DRAFT_IMAGE_MODEL || process.env.OPENAI_IMAGE_MODEL || "gpt-image-1").slice(0, 120) || "gpt-image-1";
 const OPENAI_AI_DRAFT_READY_THRESHOLD = Math.max(0, Math.min(1, Number(process.env.OPENAI_AI_DRAFT_READY_THRESHOLD || 0.8) || 0.8));
 const OPENAI_AI_DRAFT_IMAGE_TIMEOUT_MS = Math.max(20 * 1000, Number(process.env.OPENAI_AI_DRAFT_IMAGE_TIMEOUT_MS || 90 * 1000));
+const AUTO_PROCESS_TELEGRAM_DRAFTS = parseBooleanLike(process.env.AUTO_PROCESS_TELEGRAM_DRAFTS);
 const DEFAULT_AI_IMAGE_GENERATION = Object.freeze({
   background: "black",
   backgroundHex: "#050505",
@@ -236,6 +237,7 @@ let aiDraftRepository = null;
 let httpServer = null;
 let shuttingDown = false;
 let storeMutationQueue = Promise.resolve();
+const telegramAutoProcessingDraftIds = new Set();
 const adminSessions = new Map();
 const rateLimitBuckets = new Map();
 let rateLimitLastCleanupAt = 0;
@@ -2209,6 +2211,309 @@ function buildTelegramAiDraftPayload(update, sourceInfo, existingDraft) {
     notes: safeExistingDraft && Array.isArray(safeExistingDraft.notes) ? safeExistingDraft.notes : [],
     image: safeExistingDraft ? safeExistingDraft.image : ""
   };
+}
+
+function hasAiDraftAnalysisSnapshot(draft) {
+  const safeDraft = draft && typeof draft === "object" ? draft : null;
+  if (!safeDraft) {
+    return false;
+  }
+
+  const analysis = safeDraft.analysis && typeof safeDraft.analysis === "object" ? safeDraft.analysis : null;
+  if (!analysis) {
+    return false;
+  }
+
+  return Boolean(
+    analysis.openai
+    || analysis.brand
+    || analysis.name
+    || analysis.description
+    || (Array.isArray(analysis.volumes) && analysis.volumes.length)
+    || Number(safeDraft.confidenceScore || 0) > 0
+  );
+}
+
+function hasAiDraftProductManagerSnapshot(draft) {
+  const safeDraft = draft && typeof draft === "object" ? draft : null;
+  if (!safeDraft) {
+    return false;
+  }
+
+  const mediaPack = safeDraft.mediaPack && typeof safeDraft.mediaPack === "object" ? safeDraft.mediaPack : null;
+  const content = safeDraft.content && typeof safeDraft.content === "object" ? safeDraft.content : null;
+  const seo = safeDraft.seo && typeof safeDraft.seo === "object" ? safeDraft.seo : null;
+  const analysis = safeDraft.analysis && typeof safeDraft.analysis === "object" ? safeDraft.analysis : null;
+
+  return Boolean(
+    (seo && (seo.title || seo.description || seo.slug))
+    || (content && (
+      content.shortDescription
+      || content.fullDescription
+      || (Array.isArray(content.fragranceNotes) && content.fragranceNotes.length)
+      || (Array.isArray(content.season) && content.season.length)
+      || (Array.isArray(content.timeOfDay) && content.timeOfDay.length)
+      || content.longevity
+      || content.sillage
+      || content.suitableFor
+      || content.salesCopy
+    ))
+    || (mediaPack && (
+      (mediaPack.catalogImage && mediaPack.catalogImage.url)
+      || (mediaPack.heroImage && mediaPack.heroImage.url)
+      || (mediaPack.bannerImage && mediaPack.bannerImage.url)
+      || (mediaPack.thumbnail && mediaPack.thumbnail.url)
+      || (Array.isArray(mediaPack.gallery) && mediaPack.gallery.length)
+    ))
+    || (analysis && analysis.productManager)
+  );
+}
+
+function buildAiDraftAutoProcessingAnalysis(existingAnalysis, patch) {
+  const baseAnalysis = existingAnalysis && typeof existingAnalysis === "object"
+    ? cloneData(existingAnalysis)
+    : {};
+  const existingAuto = baseAnalysis.autoProcessing && typeof baseAnalysis.autoProcessing === "object"
+    ? baseAnalysis.autoProcessing
+    : {};
+  const safePatch = patch && typeof patch === "object" ? patch : {};
+  const nextAuto = Object.assign({}, existingAuto, {
+    source: "telegram_webhook",
+    enabled: AUTO_PROCESS_TELEGRAM_DRAFTS,
+    state: safeString(safePatch.state || existingAuto.state).slice(0, 40) || "idle",
+    stage: safeString(safePatch.stage || existingAuto.stage).slice(0, 60) || "",
+    startedAt: safePatch.startedAt || existingAuto.startedAt || "",
+    lastAttemptAt: safePatch.lastAttemptAt || existingAuto.lastAttemptAt || "",
+    finishedAt: safePatch.finishedAt || existingAuto.finishedAt || ""
+  });
+
+  if (Object.prototype.hasOwnProperty.call(safePatch, "lastError")) {
+    if (safePatch.lastError && typeof safePatch.lastError === "object") {
+      nextAuto.lastError = {
+        code: safeString(safePatch.lastError.code).slice(0, 120),
+        message: safeString(safePatch.lastError.message).slice(0, 1000)
+      };
+    } else {
+      nextAuto.lastError = null;
+    }
+  }
+
+  baseAnalysis.autoProcessing = nextAuto;
+  return baseAnalysis;
+}
+
+function buildAiDraftWithAutoProcessingState(draft, patch) {
+  const safeDraft = draft && typeof draft === "object" ? draft : null;
+  if (!safeDraft) {
+    throw new Error("INVALID_AI_DRAFT_PAYLOAD");
+  }
+
+  const safePatch = patch && typeof patch === "object" ? patch : {};
+  return sanitizeIncomingAiDraft(Object.assign({}, safeDraft, {
+    status: safePatch.status !== undefined ? safePatch.status : safeDraft.status,
+    analysis: buildAiDraftAutoProcessingAnalysis(safeDraft.analysis, safePatch)
+  }), safeDraft);
+}
+
+function shouldAutoProcessTelegramDraft(existingDraft, nextDraft) {
+  if (!AUTO_PROCESS_TELEGRAM_DRAFTS) {
+    return false;
+  }
+
+  const safeDraft = nextDraft && typeof nextDraft === "object" ? nextDraft : null;
+  if (!safeDraft || safeDraft.source !== "telegram") {
+    return false;
+  }
+
+  if (safeDraft.status === "published" || safeDraft.status === "ready_to_publish" || safeDraft.status === "needs_review") {
+    return false;
+  }
+
+  if (telegramAutoProcessingDraftIds.has(safeDraft.id)) {
+    return false;
+  }
+
+  const safeExistingDraft = existingDraft && typeof existingDraft === "object" ? existingDraft : null;
+  if (!safeExistingDraft) {
+    return true;
+  }
+
+  if (safeExistingDraft.status !== "pending") {
+    return false;
+  }
+
+  if (hasAiDraftAnalysisSnapshot(safeExistingDraft) || hasAiDraftProductManagerSnapshot(safeExistingDraft)) {
+    return false;
+  }
+
+  return true;
+}
+
+async function updateAiDraftAfterAutoProcessingFailure(draftId, stage, error, startedAt) {
+  const safeDraftId = safeString(draftId).slice(0, 120);
+  if (!safeDraftId || !aiDraftRepository) {
+    return;
+  }
+
+  const now = normalizeIsoDate(new Date().toISOString());
+  await runSerializedStoreMutation(async () => {
+    const currentDraft = await aiDraftRepository.getById(safeDraftId);
+    if (!currentDraft || currentDraft.status === "published") {
+      return;
+    }
+
+    const nextDraft = buildAiDraftWithAutoProcessingState(currentDraft, {
+      status: "needs_review",
+      state: "failed",
+      stage: safeString(stage).slice(0, 60) || "unknown",
+      startedAt: startedAt || now,
+      lastAttemptAt: now,
+      finishedAt: now,
+      lastError: {
+        code: error && error.code ? error.code : "",
+        message: error && error.message ? error.message : String(error || "AUTO_PROCESS_FAILED")
+      }
+    });
+
+    await aiDraftRepository.save(nextDraft);
+  });
+}
+
+async function autoProcessTelegramAiDraft(draftId) {
+  const safeDraftId = safeString(draftId).slice(0, 120);
+  if (!safeDraftId || !aiDraftRepository || telegramAutoProcessingDraftIds.has(safeDraftId)) {
+    return;
+  }
+
+  telegramAutoProcessingDraftIds.add(safeDraftId);
+  const startedAt = normalizeIsoDate(new Date().toISOString());
+  let currentStage = "analysis";
+
+  try {
+    await runSerializedStoreMutation(async () => {
+      const currentDraft = await aiDraftRepository.getById(safeDraftId);
+      if (!currentDraft || currentDraft.source !== "telegram" || currentDraft.status === "published") {
+        return;
+      }
+
+      if (hasAiDraftProductManagerSnapshot(currentDraft)) {
+        return;
+      }
+
+      const nextDraft = buildAiDraftWithAutoProcessingState(currentDraft, {
+        state: "running",
+        stage: currentStage,
+        startedAt,
+        lastAttemptAt: startedAt,
+        finishedAt: "",
+        lastError: null
+      });
+      await aiDraftRepository.save(nextDraft);
+    });
+
+    let draftSnapshot = await aiDraftRepository.getById(safeDraftId);
+    if (!draftSnapshot || draftSnapshot.source !== "telegram" || draftSnapshot.status === "published") {
+      return;
+    }
+
+    const analysisResult = await requestOpenAiAiDraftAnalysis(draftSnapshot);
+    draftSnapshot = await runSerializedStoreMutation(async () => {
+      const currentDraft = await aiDraftRepository.getById(safeDraftId);
+      if (!currentDraft || currentDraft.status === "published") {
+        return currentDraft;
+      }
+
+      let nextDraft = buildAiDraftFromAnalysisResult(currentDraft, analysisResult);
+      currentStage = "create_card";
+      nextDraft = buildAiDraftWithAutoProcessingState(nextDraft, {
+        state: "running",
+        stage: currentStage,
+        startedAt,
+        lastAttemptAt: normalizeIsoDate(new Date().toISOString()),
+        finishedAt: "",
+        lastError: null
+      });
+      await aiDraftRepository.save(nextDraft);
+      return nextDraft;
+    });
+
+    if (!draftSnapshot || draftSnapshot.status === "published") {
+      return;
+    }
+
+    const productCardData = await requestOpenAiAiDraftProductCard(draftSnapshot);
+    const mediaPack = await requestOpenAiAiDraftMediaPack(draftSnapshot, productCardData.normalized);
+
+    await runSerializedStoreMutation(async () => {
+      const currentDraft = await aiDraftRepository.getById(safeDraftId);
+      if (!currentDraft || currentDraft.status === "published") {
+        return;
+      }
+
+      const finalStatus = Number(currentDraft.confidenceScore || 0) >= OPENAI_AI_DRAFT_READY_THRESHOLD
+        ? "ready_to_publish"
+        : "needs_review";
+      let nextDraft = buildAiDraftFromProductCardResult(
+        currentDraft,
+        Object.assign({}, productCardData.normalized, {
+          model: productCardData.model
+        }),
+        mediaPack
+      );
+      nextDraft = buildAiDraftWithAutoProcessingState(nextDraft, {
+        status: finalStatus,
+        state: "completed",
+        stage: "completed",
+        startedAt,
+        lastAttemptAt: normalizeIsoDate(new Date().toISOString()),
+        finishedAt: normalizeIsoDate(new Date().toISOString()),
+        lastError: null
+      });
+      await aiDraftRepository.save(nextDraft);
+    });
+
+    console.log("Telegram AI draft auto-processing completed:", {
+      draftId: safeDraftId
+    });
+  } catch (error) {
+    console.error("Telegram AI draft auto-processing failed:", {
+      draftId: safeDraftId,
+      stage: currentStage,
+      code: error && error.code ? error.code : "",
+      status: error && error.status ? error.status : 0,
+      message: error && error.message ? error.message : String(error)
+    });
+
+    try {
+      await updateAiDraftAfterAutoProcessingFailure(safeDraftId, currentStage, error, startedAt);
+    } catch (saveError) {
+      console.error("Telegram AI draft failure state save failed:", {
+        draftId: safeDraftId,
+        stage: currentStage,
+        message: saveError && saveError.message ? saveError.message : String(saveError)
+      });
+    }
+  } finally {
+    telegramAutoProcessingDraftIds.delete(safeDraftId);
+  }
+}
+
+function scheduleTelegramAiDraftAutoProcessing(draftId) {
+  const safeDraftId = safeString(draftId).slice(0, 120);
+  if (!safeDraftId || !AUTO_PROCESS_TELEGRAM_DRAFTS || telegramAutoProcessingDraftIds.has(safeDraftId)) {
+    return false;
+  }
+
+  setTimeout(() => {
+    autoProcessTelegramAiDraft(safeDraftId).catch((error) => {
+      console.error("Telegram AI draft auto-processing scheduler failed:", {
+        draftId: safeDraftId,
+        message: error && error.message ? error.message : String(error)
+      });
+    });
+  }, 0);
+
+  return true;
 }
 
 function getTelegramBotToken() {
@@ -5572,7 +5877,8 @@ async function handleTelegramWebhookApi(req, res) {
       await aiDraftRepository.save(nextDraft);
       return {
         created,
-        draft: nextDraft
+        draft: nextDraft,
+        autoProcessScheduled: shouldAutoProcessTelegramDraft(existingDraft, nextDraft)
       };
     });
 
@@ -5585,15 +5891,21 @@ async function handleTelegramWebhookApi(req, res) {
       created: result.created,
       sourceUrl: result.draft && result.draft.sourceUrl,
       hasPhoto: Boolean(telegramInfo && telegramInfo.hasPhoto),
-      messageId: telegramInfo && telegramInfo.messageId
+      messageId: telegramInfo && telegramInfo.messageId,
+      autoProcessScheduled: result.autoProcessScheduled
     });
+
+    if (result.autoProcessScheduled) {
+      scheduleTelegramAiDraftAutoProcessing(result.draft && result.draft.id);
+    }
 
     sendJson(res, 200, {
       ok: true,
       ignored: false,
       created: result.created,
       draftId: result.draft && result.draft.id,
-      status: result.draft && result.draft.status
+      status: result.draft && result.draft.status,
+      autoProcessScheduled: result.autoProcessScheduled
     });
   } catch (error) {
     console.error("Telegram webhook draft creation failed:", {
