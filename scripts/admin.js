@@ -116,6 +116,7 @@
     elements.perfumeImagePreview = document.getElementById("perfumeImagePreview");
     elements.topWeekInput = document.getElementById("topWeekInput");
     elements.topMonthInput = document.getElementById("topMonthInput");
+    elements.limitedQuantityInput = document.getElementById("limitedQuantityInput");
     elements.addVolumeBtn = document.getElementById("addVolumeBtn");
     elements.volumesContainer = document.getElementById("volumesContainer");
     elements.cancelEditBtn = document.getElementById("cancelEditBtn");
@@ -671,6 +672,7 @@
         description: String(parsed.description || ""),
         topWeek: Boolean(parsed.topWeek),
         topMonth: Boolean(parsed.topMonth),
+        limitedQuantity: Boolean(parsed.limitedQuantity),
         imageData: String(parsed.imageData || ""),
         volumes: safeVolumes
       };
@@ -750,6 +752,7 @@
       description: String(elements.perfumeDescriptionInput.value || ""),
       topWeek: Boolean(elements.topWeekInput.checked),
       topMonth: Boolean(elements.topMonthInput.checked),
+      limitedQuantity: Boolean(elements.limitedQuantityInput.checked),
       imageData: String(state.imageData || ""),
       volumes: getCurrentDraftVolumes()
     };
@@ -768,7 +771,7 @@
       return true;
     }
 
-    if (Boolean(draft.topWeek) || Boolean(draft.topMonth)) {
+    if (Boolean(draft.topWeek) || Boolean(draft.topMonth) || Boolean(draft.limitedQuantity)) {
       return true;
     }
 
@@ -835,6 +838,7 @@
     elements.perfumeDescriptionInput.value = String(draft.description || "");
     elements.topWeekInput.checked = Boolean(draft.topWeek);
     elements.topMonthInput.checked = Boolean(draft.topMonth);
+    elements.limitedQuantityInput.checked = Boolean(draft.limitedQuantity);
     elements.perfumeImageInput.value = "";
 
     setPreviewImage(state.imageData);
@@ -1053,7 +1057,8 @@
       volumes: volumes,
       reviews: existing && Array.isArray(existing.reviews) ? existing.reviews : [],
       topWeek: elements.topWeekInput.checked,
-      topMonth: elements.topMonthInput.checked
+      topMonth: elements.topMonthInput.checked,
+      limitedQuantity: elements.limitedQuantityInput.checked
     };
 
     var isEditing = Boolean(existing);
@@ -1145,6 +1150,7 @@
     elements.perfumeDescriptionInput.value = product.description || "";
     elements.topWeekInput.checked = Boolean(product.topWeek);
     elements.topMonthInput.checked = Boolean(product.topMonth);
+    elements.limitedQuantityInput.checked = Boolean(product.limitedQuantity);
     elements.perfumeImageInput.value = "";
 
     setPreviewImage(product.image);
@@ -1291,6 +1297,9 @@
     }
     if (mode === "month") {
       nextProduct.topMonth = checked;
+    }
+    if (mode === "limited") {
+      nextProduct.limitedQuantity = checked;
     }
 
     try {
@@ -2003,6 +2012,7 @@
       + "    <div class=\"admin-product-actions\">"
       + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"week\" data-id=\"" + escapeHtml(productId) + "\" " + (product.topWeek ? "checked" : "") + ">Топ недели</label>"
       + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"month\" data-id=\"" + escapeHtml(productId) + "\" " + (product.topMonth ? "checked" : "") + ">Топ месяца</label>"
+      + "      <label class=\"toggle-inline\"><input type=\"checkbox\" data-toggle=\"limited\" data-id=\"" + escapeHtml(productId) + "\" " + (product.limitedQuantity ? "checked" : "") + ">Ограниченное количество</label>"
       + "    </div>"
       + "    <div class=\"admin-product-review-summary\">"
       + "      <span>Отзывы: " + productReviewsCount + " • На модерации: " + pendingProductReviewsCount + "</span>"

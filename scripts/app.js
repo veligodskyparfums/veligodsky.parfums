@@ -1184,6 +1184,7 @@
     return products.map(function (product) {
       return buildProductCard(product, {
         showTopBadge: product.topWeek || product.topMonth,
+        showLimitedBadge: Boolean(product.limitedQuantity),
         compact: false,
         mode: "catalog"
       });
@@ -1312,6 +1313,11 @@
       topLabel = "<span class=\"top-badge\">🔥 ТОП</span>";
     }
 
+    var limitedLabel = "";
+    if (config.showLimitedBadge) {
+      limitedLabel = "<span class=\"limited-badge\">Ограничено</span>";
+    }
+
     var cardClasses = "product-card reveal";
     if (config.compact) {
       cardClasses += " product-card--compact";
@@ -1322,6 +1328,7 @@
       + "  <div class=\"product-image-wrap\">"
       + "    <img loading=\"lazy\" decoding=\"async\" data-fallback-image=\"" + escapeHtml(PRODUCT_PLACEHOLDER_IMAGE) + "\" src=\"" + escapeHtml(product.image) + "\" alt=\"" + escapeHtml(product.name) + "\">"
       + topLabel
+      + limitedLabel
       + "  </div>"
       + "  <div class=\"product-content\">"
       + "    <div>"

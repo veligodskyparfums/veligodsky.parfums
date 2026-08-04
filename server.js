@@ -1370,7 +1370,8 @@ function buildPublicCatalogProductSummary(product) {
     reviewsCount: getProductPublishedReviewsCount(safeProduct),
     reviewsLoaded: false,
     topWeek: Boolean(safeProduct.topWeek),
-    topMonth: Boolean(safeProduct.topMonth)
+    topMonth: Boolean(safeProduct.topMonth),
+    limitedQuantity: Boolean(safeProduct.limitedQuantity)
   };
 }
 
@@ -1392,7 +1393,8 @@ function buildAdminCatalogProductSummary(product) {
     pendingReviewsLoaded: false,
     detailsLoaded: false,
     topWeek: Boolean(safeProduct.topWeek),
-    topMonth: Boolean(safeProduct.topMonth)
+    topMonth: Boolean(safeProduct.topMonth),
+    limitedQuantity: Boolean(safeProduct.limitedQuantity)
   };
 }
 
@@ -1736,6 +1738,9 @@ async function mergeIncomingStorePayloadWithCurrentData(payload, currentData) {
       if (Object.prototype.hasOwnProperty.call(product, "topMonth")) {
         nextProduct.topMonth = Boolean(product.topMonth);
       }
+      if (Object.prototype.hasOwnProperty.call(product, "limitedQuantity")) {
+        nextProduct.limitedQuantity = Boolean(product.limitedQuantity);
+      }
 
       return nextProduct;
     })
@@ -1871,7 +1876,8 @@ function sanitizeIncomingAdminProduct(rawProduct, existingProduct) {
     reviews,
     pendingReviews,
     topWeek: Boolean(rawProduct.topWeek),
-    topMonth: Boolean(rawProduct.topMonth)
+    topMonth: Boolean(rawProduct.topMonth),
+    limitedQuantity: Boolean(rawProduct.limitedQuantity)
   };
 }
 
