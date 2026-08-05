@@ -402,6 +402,18 @@ body.menu-open .nav {
   display: grid;
   align-items: end;
   overflow: hidden;
+  isolation: isolate;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: min(24vh, 220px);
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(4, 7, 12, 0.88) 0%, rgba(7, 11, 19, 0.54) 42%, rgba(7, 10, 16, 0) 100%);
 }
 
 .hero-bg {
@@ -2199,13 +2211,18 @@ body.menu-open .nav {
 
   .site-header {
     background:
-      radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.08), transparent 30%),
-      linear-gradient(180deg, rgba(4, 4, 4, 0.992) 0%, rgba(7, 7, 7, 0.965) 58%, rgba(9, 9, 9, 0.93) 100%);
+      radial-gradient(circle at 18% 0%, rgba(144, 176, 214, 0.12), transparent 32%),
+      linear-gradient(180deg, rgba(7, 12, 20, 0.985) 0%, rgba(7, 10, 18, 0.95) 54%, rgba(8, 8, 10, 0.92) 100%);
   }
 
   .stock-banner-inner {
     min-height: 0;
-    padding: 10px 0;
+    padding: 8px 0 10px;
+  }
+
+  .stock-banner {
+    background:
+      linear-gradient(180deg, rgba(9, 14, 24, 0.94) 0%, rgba(12, 12, 14, 0.9) 100%);
   }
 
   .stock-banner-cloud {
@@ -2213,19 +2230,23 @@ body.menu-open .nav {
     text-align: left;
     font-size: 0.82rem;
     line-height: 1.38;
-    border-radius: 20px;
-    padding: 11px 14px;
+    border-radius: 22px;
+    padding: 10px 14px;
+    background:
+      linear-gradient(180deg, rgba(24, 28, 36, 0.92) 0%, rgba(19, 19, 20, 0.84) 100%);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.26);
   }
 
   .hero-content {
-    padding-top: 84px;
-    padding-bottom: 34px;
+    padding-top: 116px;
+    padding-bottom: 40px;
   }
 
   .eyebrow {
-    margin-bottom: 12px;
+    margin-bottom: 14px;
     font-size: 0.68rem;
     letter-spacing: 0.13em;
+    max-width: 280px;
   }
 
   .hero h1 {
@@ -2233,10 +2254,11 @@ body.menu-open .nav {
     font-size: clamp(2.15rem, 13vw, 3.55rem);
     line-height: 0.93;
     text-wrap: balance;
+    max-width: 9ch;
   }
 
   .hero-subtitle {
-    margin-top: 14px;
+    margin-top: 16px;
     font-size: 0.96rem;
   }
 
