@@ -1217,6 +1217,115 @@ body.menu-open .nav {
   gap: 14px;
 }
 
+.partners {
+  content-visibility: auto;
+  contain-intrinsic-size: 680px;
+}
+
+.partners-intro {
+  max-width: 860px;
+  color: var(--accent-muted);
+  margin-top: 10px;
+}
+
+.partners-highlight {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-lg);
+  padding: clamp(18px, 4vw, 28px);
+}
+
+.partners-kicker {
+  display: inline-flex;
+  width: fit-content;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.partners-highlight h3 {
+  font-size: clamp(1.3rem, 3vw, 1.9rem);
+}
+
+.partners-highlight p {
+  color: var(--accent-muted);
+}
+
+.partners-carousel {
+  overflow: hidden;
+}
+
+.partners-track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(320px, calc(50% - 8px));
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+}
+
+.partners-track::-webkit-scrollbar {
+  height: 8px;
+}
+
+.partners-track::-webkit-scrollbar-thumb {
+  background: #4b4b4b;
+  border-radius: 999px;
+}
+
+.partner-card {
+  scroll-snap-align: start;
+  display: grid;
+  overflow: hidden;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-lg);
+}
+
+.partner-card-image {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  display: block;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.partner-card-body {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+}
+
+.partner-card-city {
+  color: var(--muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.partner-card-body h3 {
+  font-size: clamp(1.15rem, 2.6vw, 1.55rem);
+}
+
+.partner-card-body p {
+  color: var(--accent-muted);
+}
+
+.partner-card-link {
+  width: fit-content;
+  min-width: 0;
+}
+
 .site-footer {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   padding: 26px 0 30px;
@@ -2233,6 +2342,14 @@ body.menu-open .nav {
 @media (max-width: 600px) {
   .stock-banner-cloud {
     font-size: 0.79rem;
+  }
+
+  .partners-track {
+    grid-auto-columns: minmax(270px, 88%);
+  }
+
+  .partner-card-body {
+    padding: 16px;
   }
 
   .admin-capacity-monitor {
