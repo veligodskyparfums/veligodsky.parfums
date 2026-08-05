@@ -1304,18 +1304,19 @@
 
     try {
       if (typeof store.upsertAdminProduct === "function") {
-        await store.upsertAdminProduct(nextProduct);
+        var updateResult = await store.upsertAdminProduct(nextProduct);
+        syncCatalogProductAfterSave(updateResult && updateResult.product ? updateResult.product : nextProduct);
       } else {
         var products = store.getProducts();
         var next = products.map(function (item) {
           return item.id === id ? nextProduct : item;
         });
         await store.saveProducts(next);
+        syncCatalogProductAfterSave(nextProduct);
       }
-      await loadCatalogPage({ reset: true, showErrorToast: false });
-      showToast("Топ-статус обновлён");
+      showToast("Статус товара обновлён");
     } catch (error) {
-      showToast("Не удалось обновить топ-статус на сервере.", true);
+      showToast("Не удалось обновить статус товара на сервере.", true);
       toggle.checked = !checked;
     }
   }
@@ -1549,6 +1550,14 @@
     });
   }
 
+  function syncCatalogProductAfterSave(nextProduct) {
+    if (!nextProduct || typeof nextProduct !== "object") {
+      return;
+    }
+    replaceCatalogProduct(nextProduct);
+    renderProducts();
+  }
+
   async function ensureProductDetails(productId) {
     var current = getProductById(productId);
     if (current && current.detailsLoaded !== false) {
@@ -1751,9 +1760,8 @@
     });
 
     try {
-      await store.upsertAdminProduct(nextProduct);
-      await loadCatalogPage({ reset: true, showErrorToast: false });
-      renderProducts();
+      var updateResult = await store.upsertAdminProduct(nextProduct);
+      syncCatalogProductAfterSave(updateResult && updateResult.product ? updateResult.product : nextProduct);
       showToast("Отзыв опубликован.");
     } catch (error) {
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
@@ -1793,9 +1801,8 @@
     });
 
     try {
-      await store.upsertAdminProduct(nextProduct);
-      await loadCatalogPage({ reset: true, showErrorToast: false });
-      renderProducts();
+      var updateResult = await store.upsertAdminProduct(nextProduct);
+      syncCatalogProductAfterSave(updateResult && updateResult.product ? updateResult.product : nextProduct);
       showToast("Отзыв отклонён.");
     } catch (error) {
       if (String(error && error.message || "").indexOf("401") >= 0 || String(error && error.message || "").indexOf("UNAUTHORIZED") >= 0) {
@@ -2313,8 +2320,12 @@
     })].concat(published);
 
     try {
-      await store.saveHomepageReviews(nextPublished);
-      await store.savePendingHomepageReviews(nextPending);
+      if (typeof store.saveHomepageReviewModerationState === "function") {
+        await store.saveHomepageReviewModerationState(nextPublished, nextPending);
+      } else {
+        await store.saveHomepageReviews(nextPublished);
+        await store.savePendingHomepageReviews(nextPending);
+      }
       renderHomepageReviews();
       showToast("Отзыв опубликован.");
     } catch (error) {

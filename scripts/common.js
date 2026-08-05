@@ -613,7 +613,8 @@
       pendingReviewsLoaded: product.pendingReviewsLoaded === false ? false : true,
       detailsLoaded: product.detailsLoaded === false ? false : true,
       topWeek: Boolean(product.topWeek),
-      topMonth: Boolean(product.topMonth)
+      topMonth: Boolean(product.topMonth),
+      limitedQuantity: Boolean(product.limitedQuantity)
     };
   }
 
@@ -1620,6 +1621,28 @@
     return Array.isArray(saved.pendingHomepageReviews) ? saved.pendingHomepageReviews : [];
   }
 
+  async function saveHomepageReviewModerationState(reviews, pendingReviews) {
+    var data = await loadWritableStoreDataBase();
+    data.reviews = normalizeReviewList(reviews, {
+      prefix: "hr",
+      maxItems: 30,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+    data.pendingHomepageReviews = normalizeReviewList(pendingReviews, {
+      prefix: "phr",
+      maxItems: 120,
+      maxTextLength: 500,
+      sortByCreatedAtDesc: true
+    });
+
+    var saved = await commitData(data);
+    return {
+      reviews: Array.isArray(saved.reviews) ? saved.reviews : [],
+      pendingHomepageReviews: Array.isArray(saved.pendingHomepageReviews) ? saved.pendingHomepageReviews : []
+    };
+  }
+
   function applyHomepageReviewsCache(reviews) {
     var nextReviews = normalizeReviewList(reviews, {
       prefix: "hr",
@@ -2084,6 +2107,7 @@
     getPendingHomepageReviews: getPendingHomepageReviews,
     saveHomepageReviews: saveHomepageReviews,
     savePendingHomepageReviews: savePendingHomepageReviews,
+    saveHomepageReviewModerationState: saveHomepageReviewModerationState,
     fetchReviewCaptcha: fetchReviewCaptcha,
     fetchProductReviews: fetchProductReviews,
     submitHomepageReview: submitHomepageReview,
