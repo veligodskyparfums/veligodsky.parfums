@@ -45,6 +45,17 @@ body {
   background-color: #050505;
 }
 
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 60;
+}
+
 img {
   max-width: 100%;
   display: block;
@@ -2173,6 +2184,14 @@ body.menu-open .nav {
 
   .container {
     width: min(100%, calc(100vw - 22px));
+  }
+
+  body::before {
+    height: calc(var(--safe-top) + 88px);
+    background:
+      radial-gradient(circle at 50% 0%, rgba(90, 120, 160, 0.16), transparent 48%),
+      linear-gradient(180deg, rgba(7, 12, 20, 0.985) 0%, rgba(8, 11, 17, 0.96) 56%, rgba(8, 8, 10, 0.9) 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
 
   .section {
