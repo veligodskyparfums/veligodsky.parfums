@@ -156,6 +156,8 @@ const ALLOWED_STATIC_FILES = new Set([
   "favicon.svg",
   "assets/hero-welcome-readable.jpg",
   "assets/hero-welcome-logo.jpg",
+  "assets/kolyuchiy-soborny-90.webp",
+  "assets/kolyuchiy-zorge-66a.webp",
   "assets/product-placeholder.svg",
   "robots.txt",
   "sitemap.xml",
