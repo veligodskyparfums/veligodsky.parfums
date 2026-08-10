@@ -64,6 +64,7 @@
   var filtersResetPending = false;
   var catalogRenderToken = 0;
   var catalogLoadMoreInFlight = false;
+  var homepageReviewsNavRafId = 0;
 
   document.addEventListener("DOMContentLoaded", function () {
     init().catch(function () {
@@ -168,7 +169,7 @@
       ensureReviewCaptcha(elements.homepageReviewForm);
     }
 
-    updateHomepageReviewsNavState();
+    scheduleHomepageReviewsNavState();
   }
 
   function scheduleSecondaryStartupTasks() {
@@ -370,7 +371,9 @@
     }
 
     if (elements.homepageReviewsTrack) {
-      elements.homepageReviewsTrack.addEventListener("scroll", updateHomepageReviewsNavState);
+      elements.homepageReviewsTrack.addEventListener("scroll", scheduleHomepageReviewsNavState, {
+        passive: true
+      });
     }
 
     if (elements.reviewsToggleBtn) {
@@ -388,7 +391,7 @@
       scheduleAutoSync(AUTO_SYNC_FOCUS_DELAY_MS);
     });
 
-    window.addEventListener("resize", updateHomepageReviewsNavState);
+    window.addEventListener("resize", scheduleHomepageReviewsNavState);
 
   }
 
@@ -467,7 +470,7 @@
     elements.reviewsToggleBtn.textContent = isCollapsed ? "Развернуть раздел" : "Свернуть раздел";
 
     if (!isCollapsed) {
-      window.requestAnimationFrame(updateHomepageReviewsNavState);
+      scheduleHomepageReviewsNavState();
     }
   }
 
@@ -1024,7 +1027,7 @@
     var reviews = Array.isArray(state.homepageReviews) ? state.homepageReviews : [];
     if (!reviews.length) {
       elements.homepageReviewsTrack.innerHTML = "<div class=\"empty-state\">Пока отзывов нет. Станьте первым покупателем, кто поделится впечатлением.</div>";
-      updateHomepageReviewsNavState();
+      scheduleHomepageReviewsNavState();
       return;
     }
 
@@ -1048,7 +1051,7 @@
         + "</article>";
     }).join("");
 
-    updateHomepageReviewsNavState();
+    scheduleHomepageReviewsNavState();
   }
 
   function scrollHomepageReviews(direction) {
@@ -1076,6 +1079,23 @@
 
     elements.homepageReviewsPrev.disabled = !canGoPrev;
     elements.homepageReviewsNext.disabled = !canGoNext;
+  }
+
+  function scheduleHomepageReviewsNavState() {
+    if (homepageReviewsNavRafId) {
+      return;
+    }
+
+    var runner = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+      ? window.requestAnimationFrame.bind(window)
+      : function (callback) {
+        return window.setTimeout(callback, 16);
+      };
+
+    homepageReviewsNavRafId = runner(function () {
+      homepageReviewsNavRafId = 0;
+      updateHomepageReviewsNavState();
+    });
   }
 
   function switchTopTab(tab) {
